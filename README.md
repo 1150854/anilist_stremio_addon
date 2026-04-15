@@ -26,9 +26,10 @@ Replace `your_username_here` with your actual AniList username.
 npm start
 ```
 
-The extension will start on `http://localhost:3000`
 
 ### 4. Add to Stremio
+
+To add on Stremio you need to host, so Stremio can recognise the .json (as it only works with http)
 
 1. Open Stremio
 2. Go to **Settings** ? **Addons**
@@ -56,9 +57,4 @@ The extension will start on `http://localhost:3000`
 - Ensure your AniList profile is public
 - Check if you have anime in your "Currently Watching" list
 
-### Port Already in Use
-Set a different port:
-```powershell
-$env:PORT=3001; npm start
-```
 
