@@ -173,6 +173,13 @@ function transformToStremioMeta(entry) {
   
   // Prefer English title, fallback to Romaji
   const title = media.title.english || media.title.romaji;
+
+  // Build deduplicated aliases for Torrentio/search fallback
+  const aliasSet = new Set();
+  if (media.title.english) aliasSet.add(media.title.english);
+  if (media.title.romaji) aliasSet.add(media.title.romaji);
+  aliasSet.delete(title);
+  const aliases = [...aliasSet].filter(Boolean);
   
   // Convert AniList score (0-100) to IMDb-style rating (0-10)
   const rating = media.averageScore 
@@ -188,6 +195,7 @@ function transformToStremioMeta(entry) {
     id: `anilist:${media.id}`,
     type: 'anime',
     name: title,
+    aliases,
     poster: media.coverImage.large || media.coverImage.medium,
     posterShape: POSTER_SHAPES.PORTRAIT,
     background: media.bannerImage || media.coverImage.large,
