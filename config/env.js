@@ -50,6 +50,13 @@ const config = {
   port: parseInt(getEnvVar('PORT', '3000'), 10),
 
   /**
+   * MyAnimeList API Client ID (required to use the MAL service)
+   * Register an app at https://myanimelist.net/apiconfig to obtain one.
+   * @type {string|null}
+   */
+  malClientId: getEnvVar('MAL_CLIENT_ID', null),
+
+  /**
    * Node environment (development, production, etc.)
    * @type {string}
    */
@@ -77,6 +84,7 @@ function validateConfig() {
   console.log('✓ Configuration validated successfully');
   console.log(`  - Port: ${config.port}`);
   console.log(`  - Environment: ${config.nodeEnv}`);
+  console.log(`  - MAL Client ID: ${config.malClientId ? 'set' : 'not set (MAL service disabled)'}`);
 }
 
 // Validate configuration on module load

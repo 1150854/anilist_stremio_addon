@@ -9,29 +9,24 @@
  */
 
 const anilistService = require('./services/anilist');
-const { ADDON_MANIFEST, CATALOGS } = require('./config/constants');
+const malService = require('./services/mal');
+const { ADDON_MANIFEST, MAL_MANIFEST, ANILIST_CATALOGS, MAL_CATALOGS } = require('./config/constants');
 
 /**
- * Stremio addon manifest
- * 
- * The manifest defines the addon's identity, capabilities, and resources.
- * It tells Stremio what content types the addon supports and what
- * operations it can perform.
- * 
- * @constant {Object}
- * @property {string} id - Unique addon identifier
- * @property {string} version - Addon version (semver)
- * @property {string} name - Display name shown in Stremio
- * @property {string} description - Brief description of addon functionality
- * @property {Array<string>} types - Content types supported (e.g., "anime", "movie")
- * @property {Array<Object>} catalogs - Available catalogs
- * @property {Array<string>} resources - Supported resource types (catalog, meta, stream)
- * @property {string} contactEmail - Contact email for support
+ * Returns the Stremio manifest for a given service.
+ *
+ * @param {string} service - 'anilist' or 'mal'
+ * @returns {Object} Stremio manifest object
  */
-const manifest = {
-  ...ADDON_MANIFEST,
-  catalogs: CATALOGS
-};
+function getManifest(service) {
+  if (service === 'mal') {
+    return { ...MAL_MANIFEST, catalogs: MAL_CATALOGS };
+  }
+  return { ...ADDON_MANIFEST, catalogs: ANILIST_CATALOGS };
+}
+
+// Legacy single manifest (AniList) for backwards compatibility
+const manifest = getManifest('anilist');
 
 /**
  * Handles catalog requests from Stremio
@@ -53,12 +48,21 @@ const manifest = {
  * const catalog = await getCatalog("anime", "anilist.watching");
  * // Returns: { metas: [{ id: "anilist:12345", name: "...", ... }] }
  */
-async function getCatalog(type, id, extra, username) {
+async function getCatalog(type, id, extra, username, service, malClientId) {
   try {
-    console.log(`Catalog request - Type: ${type}, ID: ${id}, Extra: ${extra || 'none'}, User: ${username}`);
+    console.log(`Catalog request - Service: ${service}, Type: ${type}, ID: ${id}, User: ${username}`);
 
-    // Handle AniList currently watching catalog
-    if (id === 'anilist.watching') {
+    if (service === 'mal' && id === 'mal.watching') {
+      if (type !== 'anime') {
+        console.warn(`Invalid type "${type}" for catalog "${id}". Expected "anime".`);
+        return { metas: [] };
+      }
+      const metas = await malService.getCurrentlyWatchingAnime(username, malClientId);
+      console.log(`Returning ${metas.length} items for MAL catalog "${id}"`);
+      return { metas };
+    }
+
+    if (service === 'anilist' && id === 'anilist.watching') {
       // Validate content type
       if (type !== 'anime') {
         console.warn(`Invalid type "${type}" for catalog "${id}". Expected "anime".`);
@@ -104,23 +108,27 @@ async function getCatalog(type, id, extra, username) {
  * const meta = await getMeta("anime", "anilist:12345");
  * // Returns: { meta: { id: "anilist:12345", name: "...", ... } }
  */
-async function getMeta(type, id, username) {
+async function getMeta(type, id, username, service, malClientId) {
   try {
-    console.log(`Meta request - Type: ${type}, ID: ${id}`);
+    console.log(`Meta request - Service: ${service}, Type: ${type}, ID: ${id}`);
 
-    // Validate content type
     if (type !== 'anime') {
       throw new Error(`Unsupported content type: ${type}`);
     }
 
-    // Validate ID format
+    if (service === 'mal') {
+      if (!id.startsWith('mal:')) {
+        throw new Error(`Invalid ID format: ${id}. Expected format: "mal:{number}"`);
+      }
+      const meta = await malService.getAnimeMeta(id, malClientId);
+      return { meta };
+    }
+
+    // Default: AniList
     if (!id.startsWith('anilist:')) {
       throw new Error(`Invalid ID format: ${id}. Expected format: "anilist:{number}"`);
     }
-
-    // Fetch anime metadata from AniList
     const meta = await anilistService.getAnimeMeta(id);
-    
     return { meta };
 
   } catch (error) {
@@ -139,6 +147,7 @@ async function getMeta(type, id, username) {
  */
 module.exports = {
   manifest,
+  getManifest,
   getCatalog,
   getMeta
 };

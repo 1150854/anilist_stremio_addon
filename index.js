@@ -44,23 +44,26 @@ if (config.isDevelopment) {
 }
 
 /**
- * Validates an AniList username from the URL path.
- * Only allows alphanumeric characters, underscores, and hyphens (2-20 chars).
+ * Validates a username from the URL path.
+ * Allows alphanumeric characters, underscores, and hyphens (2-20 chars).
  */
 function isValidUsername(username) {
   return /^[a-zA-Z0-9_-]{2,20}$/.test(username);
 }
 
+const VALID_SERVICES = new Set(['anilist', 'mal']);
+
 /**
  * GET /
  *
- * Configure page — lets users enter their AniList username and get a
- * personalised install URL for Stremio.
+ * Configure page — lets users pick AniList or MAL, enter their username,
+ * and get a personalised install URL for Stremio.
  */
 app.get('/', (req, res) => {
   const host = req.headers.host || `localhost:${config.port}`;
   const protocol = req.headers['x-forwarded-proto'] || 'http';
   const baseUrl = `${protocol}://${host}`;
+  const malConfigured = !!config.malClientId;
 
   res.setHeader('Content-Type', 'text/html');
   res.send(`<!DOCTYPE html>
@@ -68,7 +71,7 @@ app.get('/', (req, res) => {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>AniList Stremio Addon</title>
+  <title>Anime Stremio Addon</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -86,11 +89,42 @@ app.get('/', (req, res) => {
       border: 1px solid #2a2a2a;
       border-radius: 12px;
       padding: 2.5rem;
-      max-width: 480px;
+      max-width: 500px;
       width: 100%;
     }
     h1 { font-size: 1.5rem; margin-bottom: 0.4rem; color: #fff; }
-    .subtitle { color: #888; font-size: 0.9rem; margin-bottom: 2rem; }
+    .subtitle { color: #888; font-size: 0.9rem; margin-bottom: 1.8rem; }
+    .tabs { display: flex; gap: 0.5rem; margin-bottom: 1.8rem; }
+    .tab {
+      flex: 1;
+      padding: 0.55rem 0;
+      text-align: center;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 0.88rem;
+      font-weight: 500;
+      border: 1px solid #2a2a2a;
+      background: #111;
+      color: #888;
+      transition: all 0.15s;
+      user-select: none;
+    }
+    .tab:hover { color: #ccc; border-color: #444; }
+    .tab.active { background: #5b6af5; color: #fff; border-color: #5b6af5; }
+    .tab.disabled { opacity: 0.4; cursor: not-allowed; }
+    .panel { display: none; }
+    .panel.active { display: block; }
+    .warning {
+      background: #2a1f00;
+      border: 1px solid #554400;
+      border-radius: 8px;
+      padding: 0.75rem 1rem;
+      font-size: 0.82rem;
+      color: #ffcc55;
+      margin-bottom: 1.2rem;
+      line-height: 1.5;
+    }
+    .warning a { color: #ffd97a; }
     label { display: block; font-size: 0.85rem; color: #aaa; margin-bottom: 0.4rem; }
     input {
       width: 100%;
@@ -140,73 +174,115 @@ app.get('/', (req, res) => {
 </head>
 <body>
   <div class="card">
-    <h1>AniList Stremio Addon</h1>
-    <p class="subtitle">Syncs your AniList &ldquo;Currently Watching&rdquo; list to Stremio.</p>
+    <h1>Anime Stremio Addon</h1>
+    <p class="subtitle">Sync your anime tracking list to Stremio.</p>
 
-    <label for="username">Your AniList username</label>
-    <input
-      type="text"
-      id="username"
-      placeholder="e.g. MyUsername"
-      autocomplete="off"
-      spellcheck="false"
-      maxlength="20"
-    >
-    <p class="hint" id="hint">Letters, numbers, hyphens and underscores (2&ndash;20 chars).</p>
+    <div class="tabs">
+      <div class="tab active" onclick="switchTab('anilist')">AniList</div>
+      <div class="tab${malConfigured ? '' : ' disabled'}" id="mal-tab" onclick="switchTab('mal')">MyAnimeList</div>
+    </div>
 
-    <div class="result" id="result">
-      <label style="margin-top:1rem">Your install URL</label>
-      <div class="url-box" id="url-display"></div>
-      <div class="actions">
-        <button class="copy-btn" onclick="copyUrl()">Copy URL</button>
-        <a class="stremio-btn" id="stremio-link" href="#">Open in Stremio</a>
+    <!-- AniList panel -->
+    <div class="panel active" id="panel-anilist">
+      <label for="al-username">Your AniList username</label>
+      <input type="text" id="al-username" placeholder="e.g. MyUsername"
+             autocomplete="off" spellcheck="false" maxlength="20">
+      <p class="hint" id="al-hint">Letters, numbers, hyphens and underscores (2&ndash;20 chars).</p>
+      <div class="result" id="al-result">
+        <label style="margin-top:1rem">Your install URL</label>
+        <div class="url-box" id="al-url"></div>
+        <div class="actions">
+          <button class="copy-btn" onclick="copyUrl('al-url')">Copy URL</button>
+          <a class="stremio-btn" id="al-stremio" href="#">Open in Stremio</a>
+        </div>
+        <p class="copied" id="al-copied"></p>
       </div>
-      <p class="copied" id="copied-msg"></p>
+    </div>
+
+    <!-- MAL panel -->
+    <div class="panel" id="panel-mal">
+      ${malConfigured ? '' : `<div class="warning">
+        MAL support is not enabled on this server. Add <code>MAL_CLIENT_ID</code> to the
+        <code>.env</code> file. Register an app at
+        <a href="https://myanimelist.net/apiconfig" target="_blank" rel="noopener">myanimelist.net/apiconfig</a>
+        to get a Client ID.
+      </div>`}
+      <label for="mal-username">Your MyAnimeList username</label>
+      <input type="text" id="mal-username" placeholder="e.g. MyUsername"
+             autocomplete="off" spellcheck="false" maxlength="20"
+             ${malConfigured ? '' : 'disabled'}>
+      <p class="hint" id="mal-hint">Letters, numbers, hyphens and underscores (2&ndash;20 chars).</p>
+      <div class="result" id="mal-result">
+        <label style="margin-top:1rem">Your install URL</label>
+        <div class="url-box" id="mal-url"></div>
+        <div class="actions">
+          <button class="copy-btn" onclick="copyUrl('mal-url')">Copy URL</button>
+          <a class="stremio-btn" id="mal-stremio" href="#">Open in Stremio</a>
+        </div>
+        <p class="copied" id="mal-copied"></p>
+      </div>
     </div>
   </div>
 
   <script>
     const BASE = '${baseUrl}';
-    const input = document.getElementById('username');
-    const result = document.getElementById('result');
-    const urlDisplay = document.getElementById('url-display');
-    const stremioLink = document.getElementById('stremio-link');
-    const hint = document.getElementById('hint');
-    const copiedMsg = document.getElementById('copied-msg');
+    const MAL_CONFIGURED = ${malConfigured};
     const VALID = /^[a-zA-Z0-9_-]{2,20}$/;
 
-    input.addEventListener('input', () => {
-      const val = input.value.trim();
-      copiedMsg.textContent = '';
-      if (!val) {
-        input.classList.remove('error');
-        hint.textContent = 'Letters, numbers, hyphens and underscores (2\\u201320 chars).';
-        hint.classList.remove('err');
-        result.classList.remove('visible');
-        return;
-      }
-      if (!VALID.test(val)) {
-        input.classList.add('error');
-        hint.textContent = 'Invalid username \\u2014 only letters, numbers, hyphens and underscores allowed.';
-        hint.classList.add('err');
-        result.classList.remove('visible');
-        return;
-      }
-      input.classList.remove('error');
-      hint.textContent = '';
-      hint.classList.remove('err');
-      const manifestUrl = BASE + '/' + encodeURIComponent(val) + '/manifest.json';
-      urlDisplay.textContent = manifestUrl;
-      stremioLink.href = 'stremio://' + manifestUrl.replace(/^https?:\\/\\//, '');
-      result.classList.add('visible');
-    });
+    function switchTab(service) {
+      if (service === 'mal' && !MAL_CONFIGURED) return;
+      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+      document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+      const tabEl = service === 'anilist'
+        ? document.querySelector('.tab:first-child')
+        : document.getElementById('mal-tab');
+      tabEl.classList.add('active');
+      document.getElementById('panel-' + service).classList.add('active');
+    }
 
-    function copyUrl() {
-      const url = urlDisplay.textContent;
+    function setupInput(inputId, hintId, resultId, urlId, stremioId, service) {
+      const input = document.getElementById(inputId);
+      if (!input || input.disabled) return;
+      input.addEventListener('input', () => {
+        const val = input.value.trim();
+        document.getElementById(inputId.replace('username', 'copied') + '-copied') && 
+          (document.getElementById(inputId.replace('username', 'copied') + '-copied').textContent = '');
+        const hint = document.getElementById(hintId);
+        const result = document.getElementById(resultId);
+        if (!val) {
+          input.classList.remove('error');
+          hint.textContent = 'Letters, numbers, hyphens and underscores (2\\u201320 chars).';
+          hint.classList.remove('err');
+          result.classList.remove('visible');
+          return;
+        }
+        if (!VALID.test(val)) {
+          input.classList.add('error');
+          hint.textContent = 'Invalid username \\u2014 only letters, numbers, hyphens and underscores allowed.';
+          hint.classList.add('err');
+          result.classList.remove('visible');
+          return;
+        }
+        input.classList.remove('error');
+        hint.textContent = '';
+        hint.classList.remove('err');
+        const manifestUrl = BASE + '/' + service + '/' + encodeURIComponent(val) + '/manifest.json';
+        document.getElementById(urlId).textContent = manifestUrl;
+        document.getElementById(stremioId).href = 'stremio://' + manifestUrl.replace(/^https?:\\/\\//, '');
+        result.classList.add('visible');
+      });
+    }
+
+    setupInput('al-username',  'al-hint',  'al-result',  'al-url',  'al-stremio',  'anilist');
+    setupInput('mal-username', 'mal-hint', 'mal-result', 'mal-url', 'mal-stremio', 'mal');
+
+    function copyUrl(urlId) {
+      const url = document.getElementById(urlId).textContent;
       if (!url) return;
+      const copiedId = urlId.replace('-url', '-copied');
       navigator.clipboard.writeText(url).then(() => {
-        copiedMsg.textContent = 'Copied!';
-        setTimeout(() => { copiedMsg.textContent = ''; }, 2000);
+        const el = document.getElementById(copiedId);
+        if (el) { el.textContent = 'Copied!'; setTimeout(() => { el.textContent = ''; }, 2000); }
       });
     }
   </script>
@@ -215,19 +291,23 @@ app.get('/', (req, res) => {
 });
 
 /**
- * GET /:username/manifest.json
- *
- * Serves the addon manifest for a specific AniList user.
+ * GET /:service/:username/manifest.json
  */
-app.get('/:username/manifest.json', (req, res) => {
-  const { username } = req.params;
+app.get('/:service/:username/manifest.json', (req, res) => {
+  const { service, username } = req.params;
 
+  if (!VALID_SERVICES.has(service)) {
+    return res.status(HTTP_STATUS.NOT_FOUND).json({ error: 'Unknown service. Use "anilist" or "mal".' });
+  }
   if (!isValidUsername(username)) {
     return res.status(HTTP_STATUS.BAD_REQUEST).json({ error: 'Invalid username' });
   }
+  if (service === 'mal' && !config.malClientId) {
+    return res.status(HTTP_STATUS.BAD_REQUEST).json({ error: 'MAL service is not configured on this server (missing MAL_CLIENT_ID).' });
+  }
 
   try {
-    res.json(addonInterface.manifest);
+    res.json(addonInterface.getManifest(service));
   } catch (error) {
     console.error('Error serving manifest:', error.message);
     res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json({ error: 'Failed to load manifest' });
@@ -235,17 +315,23 @@ app.get('/:username/manifest.json', (req, res) => {
 });
 
 /**
- * GET /:username/catalog/:type/:id/:extra?.json
+ * GET /:service/:username/catalog/:type/:id/:extra?.json
  */
-app.get('/:username/catalog/:type/:id/:extra?.json', async (req, res) => {
-  const { username, type, id, extra } = req.params;
+app.get('/:service/:username/catalog/:type/:id/:extra?.json', async (req, res) => {
+  const { service, username, type, id, extra } = req.params;
 
+  if (!VALID_SERVICES.has(service)) {
+    return res.status(HTTP_STATUS.NOT_FOUND).json({ error: 'Unknown service. Use "anilist" or "mal".' });
+  }
   if (!isValidUsername(username)) {
     return res.status(HTTP_STATUS.BAD_REQUEST).json({ error: 'Invalid username' });
   }
+  if (service === 'mal' && !config.malClientId) {
+    return res.status(HTTP_STATUS.BAD_REQUEST).json({ error: 'MAL service is not configured on this server (missing MAL_CLIENT_ID).' });
+  }
 
   try {
-    const catalog = await addonInterface.getCatalog(type, id, extra, username);
+    const catalog = await addonInterface.getCatalog(type, id, extra, username, service, config.malClientId);
     res.json(catalog);
   } catch (error) {
     console.error('Catalog error:', error.message);
@@ -257,21 +343,23 @@ app.get('/:username/catalog/:type/:id/:extra?.json', async (req, res) => {
 });
 
 /**
- * GET /:username/meta/:type/:id.json
+ * GET /:service/:username/meta/:type/:id.json
  */
-app.get('/:username/meta/:type/:id.json', async (req, res) => {
-  const { username, type, id } = req.params;
+app.get('/:service/:username/meta/:type/:id.json', async (req, res) => {
+  const { service, username, type, id } = req.params;
 
+  if (!VALID_SERVICES.has(service)) {
+    return res.status(HTTP_STATUS.NOT_FOUND).json({ error: 'Unknown service. Use "anilist" or "mal".' });
+  }
   if (!isValidUsername(username)) {
     return res.status(HTTP_STATUS.BAD_REQUEST).json({ error: 'Invalid username' });
   }
-
-  if (!type || !id) {
-    return res.status(HTTP_STATUS.BAD_REQUEST).json({ error: 'Missing required parameters: type and id' });
+  if (service === 'mal' && !config.malClientId) {
+    return res.status(HTTP_STATUS.BAD_REQUEST).json({ error: 'MAL service is not configured on this server (missing MAL_CLIENT_ID).' });
   }
 
   try {
-    const meta = await addonInterface.getMeta(type, id, username);
+    const meta = await addonInterface.getMeta(type, id, username, service, config.malClientId);
     res.json(meta);
   } catch (error) {
     console.error('Meta error:', error.message);
@@ -315,14 +403,17 @@ app.use((error, req, res, next) => {
  */
 app.listen(config.port, () => {
   console.log('\n' + '='.repeat(60));
-  console.log('🚀 Stremio AniList Addon Server Started');
+  console.log('🚀 Anime Stremio Addon Server Started');
   console.log('='.repeat(60));
   console.log(`📡 Server listening on port ${config.port}`);
   console.log(`🌍 Environment: ${config.nodeEnv}`);
+  console.log(`✅ AniList service: enabled`);
+  console.log(`${config.malClientId ? '✅' : '⚠️ '} MAL service: ${config.malClientId ? 'enabled' : 'disabled (set MAL_CLIENT_ID in .env)'}`);
   console.log('\n📦 Configure page:');
   console.log(`   http://localhost:${config.port}/`);
   console.log('\n📜 Per-user install URL format:');
-  console.log(`   http://localhost:${config.port}/<username>/manifest.json`);
+  console.log(`   http://localhost:${config.port}/anilist/<username>/manifest.json`);
+  console.log(`   http://localhost:${config.port}/mal/<username>/manifest.json`);
   console.log('='.repeat(60) + '\n');
 });
 

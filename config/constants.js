@@ -12,6 +12,12 @@
 const ANILIST_API_URL = 'https://graphql.anilist.co';
 
 /**
+ * MyAnimeList REST API v2 base URL
+ * @constant {string}
+ */
+const MAL_API_URL = 'https://api.myanimelist.net/v2';
+
+/**
  * Default port for the Express server
  * @constant {number}
  */
@@ -23,7 +29,7 @@ const DEFAULT_PORT = 3000;
  */
 const ADDON_MANIFEST = {
   id: 'community.anilist-stremio',
-  version: '1.2.0',
+  version: '1.3.0',
   name: 'AniList Sync',
   description: 'Syncs your AniList Currently Watching anime to Stremio library',
   types: ['anime'],
@@ -32,16 +38,45 @@ const ADDON_MANIFEST = {
 };
 
 /**
- * Catalog configuration for the addon
+ * Stremio addon manifest for MyAnimeList
+ * @constant {Object}
+ */
+const MAL_MANIFEST = {
+  id: 'community.mal-stremio',
+  version: '1.3.0',
+  name: 'MyAnimeList Sync',
+  description: 'Syncs your MyAnimeList Currently Watching anime to Stremio library',
+  types: ['anime'],
+  resources: ['catalog', 'meta'],
+  contactEmail: 'contact@example.com'
+};
+
+/**
+ * Catalog configuration for the AniList addon
  * @constant {Array<Object>}
  */
-const CATALOGS = [
+const ANILIST_CATALOGS = [
   {
     type: 'anime',
     id: 'anilist.watching',
     name: 'AniList - Currently Watching'
   }
 ];
+
+/**
+ * Catalog configuration for the MAL addon
+ * @constant {Array<Object>}
+ */
+const MAL_CATALOGS = [
+  {
+    type: 'anime',
+    id: 'mal.watching',
+    name: 'MAL - Currently Watching'
+  }
+];
+
+// Keep CATALOGS as alias for AniList catalogs (backwards compat)
+const CATALOGS = ANILIST_CATALOGS;
 
 /**
  * AniList media status types
@@ -79,9 +114,13 @@ const HTTP_STATUS = {
 
 module.exports = {
   ANILIST_API_URL,
+  MAL_API_URL,
   DEFAULT_PORT,
   ADDON_MANIFEST,
+  MAL_MANIFEST,
   CATALOGS,
+  ANILIST_CATALOGS,
+  MAL_CATALOGS,
   ANILIST_STATUS,
   POSTER_SHAPES,
   HTTP_STATUS
