@@ -10,7 +10,8 @@
 
 const anilistService = require('./services/anilist');
 const malService = require('./services/mal');
-const { ADDON_MANIFEST, MAL_MANIFEST, ANILIST_CATALOGS, MAL_CATALOGS } = require('./config/constants');
+const imdbService = require('./services/imdb');
+const { ADDON_MANIFEST, MAL_MANIFEST, IMDB_MANIFEST, ANILIST_CATALOGS, MAL_CATALOGS, IMDB_CATALOGS } = require('./config/constants');
 
 // Global dedup map: "service:animeId:episode" -> timestamp of last update
 const recentlyUpdated = new Map();
@@ -38,14 +39,50 @@ const MAL_STATUS_MAP = {
 /**
  * Returns the Stremio manifest for a given service.
  *
- * @param {string} service - 'anilist' or 'mal'
+ * @param {string} service - 'anilist', 'mal', or 'imdb'
  * @returns {Object} Stremio manifest object
  */
 function getManifest(service) {
   if (service === 'mal') {
     return { ...MAL_MANIFEST, catalogs: MAL_CATALOGS };
   }
+  if (service === 'imdb') {
+    return { ...IMDB_MANIFEST, catalogs: IMDB_CATALOGS };
+  }
   return { ...ADDON_MANIFEST, catalogs: ANILIST_CATALOGS };
+}
+
+/**
+ * Returns a combined Stremio manifest merging catalogs from multiple services.
+ *
+ * @param {Object} serviceConfig - Map of service names to their tokens/usernames
+ * @returns {Object} Combined Stremio manifest object
+ */
+function getCombinedManifest(serviceConfig) {
+  const services = Object.keys(serviceConfig);
+  const catalogs = [];
+  const types = new Set();
+  const idPrefixes = new Set();
+  const resources = new Set();
+
+  for (const svc of services) {
+    const m = getManifest(svc);
+    catalogs.push(...m.catalogs);
+    m.types.forEach(t => types.add(t));
+    if (m.idPrefixes) m.idPrefixes.forEach(p => idPrefixes.add(p));
+    if (m.resources) m.resources.forEach(r => resources.add(r));
+  }
+
+  return {
+    id: 'community.combined-stremio',
+    version: '1.0.0',
+    name: 'Combined Anime & Watchlist',
+    description: 'AniList, MAL, and IMDB in one addon',
+    types: [...types],
+    resources: [...resources],
+    idPrefixes: [...idPrefixes],
+    catalogs
+  };
 }
 
 // Legacy single manifest (AniList) for backwards compatibility
@@ -75,8 +112,8 @@ async function getCatalog(type, id, extra, username, service, malClientId) {
   try {
     console.log(`Catalog request - Service: ${service}, Type: ${type}, ID: ${id}, Extra: ${extra || 'none'}, User: ${username}`);
 
-    if (type !== 'anime' && type !== 'series') {
-      console.warn(`Invalid type "${type}" for catalog "${id}". Expected "anime" or "series".`);
+    if (type !== 'anime' && type !== 'series' && type !== 'movie') {
+      console.warn(`Invalid type "${type}" for catalog "${id}". Expected "anime", "series" or "movie".`);
       return { metas: [] };
     }
 
@@ -100,6 +137,13 @@ async function getCatalog(type, id, extra, username, service, malClientId) {
       const anilistStatus = ANILIST_STATUS_MAP[genreFilter] || 'CURRENT';
       const metas = await anilistService.getAnimeList(username, anilistStatus);
       console.log(`Returning ${metas.length} items for AniList catalog [${genreFilter}]`);
+      return { metas };
+    }
+
+    if (service === 'imdb' && id === 'imdb.watchlist') {
+      const allMetas = await imdbService.getWatchlist(username);
+      const metas = allMetas.filter(m => m.type === type);
+      console.log(`Returning ${metas.length} ${type} items for IMDB watchlist (${allMetas.length} total)`);
       return { metas };
     }
 
@@ -144,6 +188,12 @@ async function getMeta(type, id, username, service, malClientId) {
         return { meta: null };
       }
       const meta = await malService.getAnimeMeta(id, malClientId);
+      return { meta };
+    }
+
+    if (service === 'imdb') {
+      // Stremio natively handles tt* ID metadata
+      const meta = await imdbService.getTitleMeta(id);
       return { meta };
     }
 
@@ -293,6 +343,7 @@ async function getStream(type, id, videoInfo, username, service, malClientId) {
 module.exports = {
   manifest,
   getManifest,
+  getCombinedManifest,
   getCatalog,
   getMeta,
   getStream

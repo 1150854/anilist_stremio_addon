@@ -97,6 +97,34 @@ const MAL_CATALOGS = [
   }
 ];
 
+/**
+ * Stremio addon manifest for IMDB
+ * @constant {Object}
+ */
+const IMDB_MANIFEST = {
+  id: 'community.imdb-stremio',
+  version: '1.0.0',
+  name: 'IMDB Watchlist',
+  description: 'Browse your public IMDB watchlist in Stremio',
+  types: ['movie', 'series'],
+  resources: ['catalog'],
+  idPrefixes: ['tt'],
+  contactEmail: 'contact@example.com'
+};
+
+const IMDB_CATALOGS = [
+  {
+    type: 'movie',
+    id: 'imdb.watchlist',
+    name: 'IMDB Watchlist'
+  },
+  {
+    type: 'series',
+    id: 'imdb.watchlist',
+    name: 'IMDB Watchlist'
+  }
+];
+
 // Keep CATALOGS as alias for AniList catalogs (backwards compat)
 const CATALOGS = ANILIST_CATALOGS;
 
@@ -158,9 +186,11 @@ module.exports = {
   DEFAULT_PORT,
   ADDON_MANIFEST,
   MAL_MANIFEST,
+  IMDB_MANIFEST,
   CATALOGS,
   ANILIST_CATALOGS,
   MAL_CATALOGS,
+  IMDB_CATALOGS,
   ANILIST_STATUS,
   POSTER_SHAPES,
   HTTP_STATUS,
