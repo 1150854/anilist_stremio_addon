@@ -737,16 +737,32 @@ app.get('/:service/:username/stream/:type/:id.json', async (req, res) => {
     if (season) videoInfo.season = parseInt(season, 10);
     if (episode) videoInfo.episode = parseInt(episode, 10);
 
-    // If no episode in query params, try to extract from ID (format: service:id:episode)
+    // If no episode in query params, try to extract from ID.
+    // Stremio series format: service:id:season:episode (4 parts)
+    // Legacy format:         service:id:episode       (3 parts)
     if (!episode && id.includes(':')) {
       const parts = id.split(':');
-      if (parts.length >= 3) {
+      if (parts.length >= 4) {
+        const potentialSeason = parseInt(parts[2], 10);
+        const potentialEpisode = parseInt(parts[3], 10);
+        if (!isNaN(potentialSeason) && potentialSeason > 0) {
+          videoInfo.season = potentialSeason;
+        }
+        if (!isNaN(potentialEpisode) && potentialEpisode > 0) {
+          videoInfo.episode = potentialEpisode;
+          console.log(`Extracted season ${potentialSeason}, episode ${potentialEpisode} from ID: ${id}`);
+        }
+      } else if (parts.length === 3) {
         const potentialEpisode = parseInt(parts[2], 10);
         if (!isNaN(potentialEpisode) && potentialEpisode > 0) {
           videoInfo.episode = potentialEpisode;
           console.log(`Extracted episode ${potentialEpisode} from ID: ${id}`);
         }
       }
+    }
+
+    if (!videoInfo.episode) {
+      console.log(`No episode info found for stream request: ${id}`);
     }
 
     const stream = await addonInterface.getStream(type, id, videoInfo, username, service, config.malClientId);

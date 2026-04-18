@@ -200,11 +200,11 @@ async function getStream(type, id, videoInfo, username, service, malClientId) {
       if (!id.startsWith('mal:')) {
         return { streams: [] };
       }
-      animeId = id.substring(4); // Remove 'mal:' prefix
+      animeId = id.split(':')[1]; // Extract just the numeric ID, ignore season/episode parts
     } else {
       // Default: AniList - handle both anilist: and kitsu: IDs
       if (id.startsWith('anilist:')) {
-        animeId = id.substring(8); // Remove 'anilist:' prefix
+        animeId = id.split(':')[1]; // Extract just the numeric ID, ignore season/episode parts
       } else if (id.startsWith('kitsu:')) {
         // Extract Kitsu ID (may include season info like kitsu:46729:3)
         const kitsuId = id.split(':')[1];
