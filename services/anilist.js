@@ -12,6 +12,156 @@ const { ANILIST_API_URL, ANILIST_STATUS, POSTER_SHAPES } = require('../config/co
 const tokenManager = require('../config/tokens');
 
 /**
+ * GraphQL query to search for anime by Kitsu ID in external links
+ * 
+ * @constant {string}
+ */
+const SEARCH_BY_KITSU_QUERY = `
+  query ($search: String, $type: MediaType) {
+    Page(page: 1, perPage: 10) {
+      media(search: $search, type: $type) {
+        id
+        title {
+          romaji
+          english
+        }
+        externalLinks {
+          site
+          url
+        }
+      }
+    }
+  }
+`;
+
+/**
+ * Maps a Kitsu anime ID to AniList anime ID
+ * 
+ * @async
+ * @param {string} kitsuId - Kitsu anime ID (e.g., "46729")
+ * @returns {Promise<string|null>} AniList ID or null if not found
+ * @throws {Error} If mapping fails
+ */
+async function mapKitsuToAniList(kitsuId) {
+  try {
+    console.log(`Attempting to map Kitsu ID ${kitsuId} to AniList ID`);
+    
+    // Method 1: Try using Kitsu ID directly as AniList ID (sometimes they match)
+    try {
+      const directResponse = await axios.post(
+        ANILIST_API_URL,
+        {
+          query: `
+            query ($id: Int) {
+              Media(id: $id, type: ANIME) {
+                id
+                title {
+                  romaji
+                  english
+                }
+              }
+            }
+          `,
+          variables: { 
+            id: parseInt(kitsuId, 10)
+          }
+        },
+        {
+          headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json'
+          },
+          timeout: 10000
+        }
+      );
+
+      if (directResponse.data.data?.Media) {
+        const media = directResponse.data.data.Media;
+        console.log(`Successfully mapped Kitsu ID ${kitsuId} to AniList ID ${media.id} (${media.title.english || media.title.romaji})`);
+        return media.id.toString();
+      }
+    } catch (directError) {
+      console.log(`Direct mapping failed for Kitsu ID ${kitsuId}`);
+    }
+
+    // Method 2: Try to get anime title from Kitsu API and search AniList
+    try {
+      console.log(`Trying title-based search for Kitsu ID ${kitsuId}`);
+      
+      // Get anime title from Kitsu API
+      const kitsuResponse = await axios.get(`https://kitsu.io/api/edge/anime/${kitsuId}`, {
+        timeout: 10000,
+        headers: {
+          'Accept': 'application/vnd.api+json',
+          'Content-Type': 'application/vnd.api+json'
+        }
+      });
+
+      if (kitsuResponse.data?.data?.attributes) {
+        const kitsuTitle = kitsuResponse.data.data.attributes.canonicalTitle ||
+                          kitsuResponse.data.data.attributes.titles?.en ||
+                          kitsuResponse.data.data.attributes.titles?.en_jp;
+
+        if (kitsuTitle) {
+          console.log(`Found Kitsu title: "${kitsuTitle}" for ID ${kitsuId}`);
+
+          // Search AniList by title
+          const searchResponse = await axios.post(
+            ANILIST_API_URL,
+            {
+              query: `
+                query ($search: String, $type: MediaType) {
+                  Page(page: 1, perPage: 5) {
+                    media(search: $search, type: $type) {
+                      id
+                      title {
+                        romaji
+                        english
+                      }
+                      synonyms
+                    }
+                  }
+                }
+              `,
+              variables: {
+                search: kitsuTitle,
+                type: 'ANIME'
+              }
+            },
+            {
+              headers: {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json'
+              },
+              timeout: 10000
+            }
+          );
+
+          const results = searchResponse.data.data?.Page?.media || [];
+          if (results.length > 0) {
+            // Take the first (best) match
+            const match = results[0];
+            console.log(`Title search matched AniList ID ${match.id} (${match.title.english || match.title.romaji}) for Kitsu title "${kitsuTitle}"`);
+            return match.id.toString();
+          } else {
+            console.log(`No AniList matches found for Kitsu title "${kitsuTitle}"`);
+          }
+        }
+      }
+    } catch (titleError) {
+      console.log(`Title-based search failed for Kitsu ID ${kitsuId}:`, titleError.message);
+    }
+
+    console.log(`Kitsu ID ${kitsuId} could not be mapped to any AniList ID`);
+    return null;
+
+  } catch (error) {
+    console.error(`Error mapping Kitsu ID ${kitsuId}:`, error.message);
+    throw new Error(`Failed to map Kitsu ID: ${error.message}`);
+  }
+}
+
+/**
  * GraphQL query to fetch user's currently watching anime
  * 
  * This query retrieves all anime from a user's list with CURRENT status,
@@ -324,7 +474,8 @@ async function updateProgress(animeId, episode, username) {
 module.exports = {
   getAnimeList,
   getAnimeMeta,
-  updateProgress
+  updateProgress,
+  mapKitsuToAniList
 };
 
 // Made with Bob

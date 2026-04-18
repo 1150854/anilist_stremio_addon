@@ -148,7 +148,7 @@ function getTokens(service, username) {
   const userKey = getUserKey(service, username);
   const userTokens = tokens[userKey];
 
-  if (!userTokens) {
+  if (!userTokens || !userTokens.access_token || !userTokens.expires_at) {
     return null;
   }
 
