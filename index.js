@@ -68,8 +68,8 @@ function configurePageHandler(req, res) {
     .logo{display:flex;align-items:center;gap:.75rem;margin-bottom:.35rem}
     .logo-icon{width:36px;height:36px;border-radius:10px;background:linear-gradient(135deg,#5b6af5,#a855f7);display:flex;align-items:center;justify-content:center;font-size:1.2rem;flex-shrink:0}
     h1{font-size:1.45rem;font-weight:700;color:#fff;letter-spacing:-.02em}
-    .subtitle{color:#666;font-size:.88rem;margin-bottom:2rem;padding-left:48px}
-    .section{margin-bottom:2rem;padding-bottom:1.5rem;border-bottom:1px solid rgba(255,255,255,.06)}
+    .subtitle{color:#666;font-size:.88rem;margin-bottom:1.5rem;padding-left:48px}
+    .section{margin-bottom:1.25rem;padding-bottom:1rem;border-bottom:1px solid rgba(255,255,255,.06)}
     .section:last-of-type{border-bottom:none;margin-bottom:0;padding-bottom:0}
     .section-title{font-size:.95rem;font-weight:600;color:#fff;margin-bottom:1rem;display:flex;align-items:center;gap:.5rem}
     .section-badge{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:6px;font-size:.75rem;flex-shrink:0}
@@ -80,28 +80,29 @@ function configurePageHandler(req, res) {
     .warn a{color:#ffd97a}
     .err-box{background:rgba(42,16,16,.8);border:1px solid rgba(85,34,34,.8);border-radius:10px;padding:.75rem 1rem;font-size:.82rem;color:#ff8888;margin-bottom:1rem}
     .url-box{display:none}
-    .actions{display:flex;gap:.6rem;flex-wrap:wrap}
     .btn{padding:.6rem 1.25rem;border-radius:8px;font-size:.88rem;font-weight:600;cursor:pointer;border:none;text-decoration:none;display:inline-flex;align-items:center;gap:.4rem;transition:all .2s;letter-spacing:.01em}
     .btn:active{transform:scale(.97)}
-    .btn-login{background:linear-gradient(135deg,#2563eb,#1d4ed8);color:#fff;width:100%;justify-content:center;padding:.75rem;font-size:.95rem;border-radius:10px;box-shadow:0 4px 16px rgba(37,99,235,.3)}
-    .btn-login:hover{box-shadow:0 4px 20px rgba(37,99,235,.5);opacity:1;filter:brightness(1.1)}
-    .btn-copy{background:rgba(255,255,255,.06);color:#ccc;border:1px solid rgba(255,255,255,.1)}
-    .btn-copy:hover{background:rgba(255,255,255,.1);color:#fff}
+    .btn-login{background:linear-gradient(135deg,#2563eb,#1d4ed8);color:#fff;justify-content:center;padding:.55rem .9rem;font-size:.85rem;border-radius:8px;box-shadow:0 2px 10px rgba(37,99,235,.25)}
+    .btn-login:hover{box-shadow:0 4px 16px rgba(37,99,235,.4);filter:brightness(1.1)}
     .btn-stremio{background:linear-gradient(135deg,#5b6af5,#7c3aed);color:#fff;box-shadow:0 4px 14px rgba(91,106,245,.3)}
     .btn-stremio:hover{box-shadow:0 4px 18px rgba(91,106,245,.5);opacity:1;filter:brightness(1.1)}
     .btn-switch{background:none;color:#444;font-size:.78rem;font-weight:400;padding:.3rem 0;margin-top:.9rem;text-decoration:underline;text-underline-offset:3px;cursor:pointer;border:none}
     .btn-switch:hover{color:#888}
     .hint{font-size:.78rem;color:#555;margin-top:.35rem;min-height:1.2em}
     .hint.err{color:#e05555}
-    label{display:block;font-size:.82rem;color:#888;margin-bottom:.4rem;font-weight:500;letter-spacing:.02em;text-transform:uppercase;font-size:.72rem}
+    .field-label{display:block;font-size:.72rem;color:#888;margin-bottom:.4rem;font-weight:500;letter-spacing:.02em;text-transform:uppercase}
     input{width:100%;padding:.65rem .9rem;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.1);border-radius:9px;color:#fff;font-size:1rem;outline:none;transition:border-color .2s,box-shadow .2s}
     input:focus{border-color:#5b6af5;box-shadow:0 0 0 3px rgba(91,106,245,.15)}
     input.invalid{border-color:#e05555}
-    .result{margin-top:1.5rem}
-    .copied{color:#4ade80;font-size:.8rem;margin-top:.5rem;min-height:1.1em}
-    .divider{height:1px;background:rgba(255,255,255,.06);margin:1.5rem 0}
     .note{font-size:.75rem;color:#3a3a4a;margin-top:1.5rem;line-height:1.6;text-align:center}
-    .pre-hint{font-size:.78rem;color:#444;margin-top:.75rem;text-align:center;line-height:1.5}
+    .section-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem}
+    .section-title{font-size:.95rem;font-weight:600;color:#fff;display:flex;align-items:center;gap:.5rem;margin-bottom:0}
+    .svc-checkbox-wrap{display:flex;align-items:center;gap:.5rem;opacity:.35;transition:opacity .2s;cursor:not-allowed}
+    .svc-checkbox-wrap.enabled{opacity:1;cursor:pointer}
+    .svc-checkbox-wrap input[type=checkbox]{width:17px;height:17px;accent-color:#5b6af5;cursor:inherit;flex-shrink:0}
+    .svc-checkbox-label{font-size:.78rem;color:#aaa;user-select:none}
+    .svc-status{font-size:.78rem;color:#4ade80;font-weight:500;display:none}
+    .svc-status.show{display:inline}
   </style>
 </head>
 <body>
@@ -114,68 +115,67 @@ function configurePageHandler(req, res) {
 
     <!-- AniList section -->
     <div class="section">
-      <div class="section-title"><span class="section-badge badge-anilist">A</span> AniList</div>
+      <div class="section-header">
+        <div class="section-title"><span class="section-badge badge-anilist">A</span> AniList</div>
+        <label class="svc-checkbox-wrap" id="al-cb-wrap" title="Include AniList in install">
+          <input type="checkbox" id="al-include" disabled onchange="updateInstallAll()">
+          <span class="svc-checkbox-label">Include</span>
+          <span class="svc-status" id="al-status">&#x2713; Connected</span>
+        </label>
+      </div>
       ${!anilistOk ? '<div class="err-box"><strong>ANILIST_CLIENT_ID not set.</strong> Add it to .env and restart.</div>' : ''}
       <div id="al-pre"${!anilistOk ? ' style="display:none"' : ''}>
         <button class="btn btn-login" onclick="alLogin()">&#x1F511;&nbsp; Login with AniList</button>
-        <p class="pre-hint">You will be redirected to AniList to authorize,<br>then returned here automatically.</p>
       </div>
-      <div id="al-post" style="display:none" class="result">
+      <div id="al-post" style="display:none">
         <div class="url-box" id="al-url"></div>
-        <div class="actions">
-          <button class="btn btn-copy" onclick="alCopy()">&#x1F4CB;&nbsp; Copy URL</button>
-          <a class="btn btn-stremio" id="al-stremio" href="#">&#x25B6;&nbsp; Open in Stremio</a>
-        </div>
-        <p class="copied" id="al-copied"></p>
         <button class="btn-switch" onclick="alReset()">Switch account</button>
       </div>
     </div>
 
     <!-- MAL section -->
     <div class="section">
-      <div class="section-title"><span class="section-badge badge-mal">M</span> MyAnimeList</div>
+      <div class="section-header">
+        <div class="section-title"><span class="section-badge badge-mal">M</span> MyAnimeList</div>
+        <label class="svc-checkbox-wrap" id="mal-cb-wrap" title="Include MAL in install">
+          <input type="checkbox" id="mal-include" disabled onchange="updateInstallAll()">
+          <span class="svc-checkbox-label">Include</span>
+          <span class="svc-status" id="mal-status">&#x2713; Connected</span>
+        </label>
+      </div>
       ${!malOauthOk ? '<div class="warn">MAL support requires <strong>MAL_CLIENT_ID</strong> and <strong>MAL_CLIENT_SECRET</strong> in .env.<br>Register at <a href="https://myanimelist.net/apiconfig" target="_blank" rel="noopener">myanimelist.net/apiconfig</a>.</div>' : ''}
       <div id="mal-pre"${!malOauthOk ? ' style="display:none"' : ''}>
         <button class="btn btn-login" onclick="malConnect()">&#x1F511;&nbsp; Connect to MyAnimeList</button>
-        <p class="pre-hint">You will be redirected to MyAnimeList to authorize,<br>then returned here automatically.</p>
       </div>
-      <div id="mal-post" style="display:none" class="result">
+      <div id="mal-post" style="display:none">
         <input type="hidden" id="mal-username" value="">
-        <div style="background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:9px;padding:.65rem .9rem;font-family:monospace;font-size:.8rem;color:#a0c4ff;word-break:break-all;margin-bottom:.8rem" id="mal-url-display"></div>
-        <div class="actions">
-          <button class="btn btn-copy" onclick="malCopy()">&#x1F4CB;&nbsp; Copy URL</button>
-          <a class="btn btn-stremio" id="mal-stremio" href="#">&#x25B6;&nbsp; Open in Stremio</a>
-        </div>
-        <p class="copied" id="mal-copied"></p>
-        <p class="hint" id="mal-auth-status" style="margin-top:.5rem"></p>
+        <p class="hint" id="mal-auth-status" style="margin-top:.25rem"></p>
         <button class="btn-switch" onclick="malReset()">Switch account</button>
       </div>
     </div>
 
     <!-- IMDB section -->
     <div class="section">
-      <div class="section-title"><span class="section-badge badge-imdb">I</span> IMDB</div>
+      <div class="section-header">
+        <div class="section-title"><span class="section-badge badge-imdb">I</span> IMDB</div>
+        <label class="svc-checkbox-wrap" id="imdb-cb-wrap" title="Include IMDB in install">
+          <input type="checkbox" id="imdb-include" disabled onchange="updateInstallAll()">
+          <span class="svc-checkbox-label">Include</span>
+          <span class="svc-status" id="imdb-status">&#x2713; Ready</span>
+        </label>
+      </div>
       <div id="imdb-form">
-        <label for="imdb-userid">IMDB User ID</label>
+        <label class="field-label" for="imdb-userid">IMDB User ID</label>
         <input type="text" id="imdb-userid" placeholder="e.g. ur12345678 or paste profile URL"
                autocomplete="off" spellcheck="false" maxlength="60">
         <p class="hint" id="imdb-hint">Found in your <a href="https://www.imdb.com/user/" target="_blank" rel="noopener" style="color:#5b6af5">IMDB profile URL</a> (e.g. ur12345678 or p.xxxx). Your watchlist must be public.</p>
-
-        <div id="imdb-result" style="display:none" class="result">
-          <div style="background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:9px;padding:.65rem .9rem;font-family:monospace;font-size:.8rem;color:#f5c518;word-break:break-all;margin-bottom:.8rem" id="imdb-url-display"></div>
-          <div class="actions">
-            <button class="btn btn-copy" onclick="imdbCopy()">&#x1F4CB;&nbsp; Copy URL</button>
-            <a class="btn btn-stremio" id="imdb-stremio" href="#">&#x25B6;&nbsp; Open in Stremio</a>
-          </div>
-          <p class="copied" id="imdb-copied"></p>
-        </div>
       </div>
     </div>
 
     <!-- Install All section -->
-    <div class="section" id="install-all-section" style="display:none">
-      <a class="btn btn-stremio" id="install-all-btn" href="#" style="width:100%;justify-content:center;padding:.85rem;font-size:1rem;border-radius:10px;text-decoration:none">&#x25B6;&nbsp; Install in Stremio</a>
-      <p class="hint" style="text-align:center;margin-top:.5rem">Installs one combined addon with all configured services.</p>
+    <div class="section" id="install-all-section">
+      <a class="btn btn-stremio" id="install-all-btn" href="#" style="width:100%;justify-content:center;padding:.85rem;font-size:1rem;border-radius:10px;text-decoration:none;pointer-events:none;opacity:.4">&#x25B6;&nbsp; Install in Stremio</a>
+      <p class="hint" style="text-align:center;margin-top:.5rem" id="install-hint">Connect a service above, then check it to install.</p>
     </div>
 
     <p class="note">Currently Watching &bull; On Hold &bull; Plan to Watch &bull; Dropped &bull; Completed &bull; Rewatching</p>
@@ -204,27 +204,26 @@ function configurePageHandler(req, res) {
     function alReset() {
       document.getElementById('al-post').style.display = 'none';
       document.getElementById('al-url').textContent = '';
-      document.getElementById('al-stremio').href = '#';
-      document.getElementById('al-copied').textContent = '';
       document.getElementById('al-pre').style.display = 'block';
+      var cb = document.getElementById('al-include');
+      var wrap = document.getElementById('al-cb-wrap');
+      cb.disabled = true; cb.checked = false;
+      wrap.classList.remove('enabled');
+      document.getElementById('al-status').classList.remove('show');
       updateInstallAll();
     }
 
     function showAlResult(token) {
       var url = BASE + '/anilist/' + encodeURIComponent(token) + '/manifest.json';
       document.getElementById('al-url').textContent = url;
-      document.getElementById('al-stremio').href = 'stremio://' + url.replace(/^https?:\\/\\//, '');
       document.getElementById('al-pre').style.display = 'none';
-      document.getElementById('al-post').style.display = 'block';      updateInstallAll();    }
-
-    function alCopy() {
-      var url = document.getElementById('al-url').textContent;
-      if (!url) return;
-      navigator.clipboard.writeText(url).then(function() {
-        var el = document.getElementById('al-copied');
-        el.textContent = 'Copied!';
-        setTimeout(function() { el.textContent = ''; }, 2000);
-      });
+      document.getElementById('al-post').style.display = 'block';
+      var cb = document.getElementById('al-include');
+      var wrap = document.getElementById('al-cb-wrap');
+      cb.disabled = false; cb.checked = true;
+      wrap.classList.add('enabled');
+      document.getElementById('al-status').classList.add('show');
+      updateInstallAll();
     }
 
     // MAL — single Connect button triggers OAuth; username discovered automatically
@@ -233,12 +232,14 @@ function configurePageHandler(req, res) {
     }
 
     function showMalResult(username) {
-      var url = BASE + '/mal/' + encodeURIComponent(username) + '/manifest.json';
       document.getElementById('mal-username').value = username;
-      document.getElementById('mal-url-display').textContent = url;
-      document.getElementById('mal-stremio').href = 'stremio://' + url.replace(/^https?:\\/\\//, '');
       document.getElementById('mal-pre').style.display = 'none';
       document.getElementById('mal-post').style.display = 'block';
+      var cb = document.getElementById('mal-include');
+      var wrap = document.getElementById('mal-cb-wrap');
+      cb.disabled = false; cb.checked = true;
+      wrap.classList.add('enabled');
+      document.getElementById('mal-status').classList.add('show');
       // Check auth status
       fetch(BASE + '/auth/mal/' + encodeURIComponent(username) + '/status')
         .then(function(r) { return r.json(); })
@@ -256,23 +257,15 @@ function configurePageHandler(req, res) {
     function malReset() {
       document.getElementById('mal-post').style.display = 'none';
       document.getElementById('mal-username').value = '';
-      document.getElementById('mal-url-display').textContent = '';
-      document.getElementById('mal-stremio').href = '#';
-      document.getElementById('mal-copied').textContent = '';
       document.getElementById('mal-auth-status').textContent = '';
       document.getElementById('mal-pre').style.display = 'block';
+      var cb = document.getElementById('mal-include');
+      var wrap = document.getElementById('mal-cb-wrap');
+      cb.disabled = true; cb.checked = false;
+      wrap.classList.remove('enabled');
+      document.getElementById('mal-status').classList.remove('show');
       try { localStorage.removeItem('mal-username'); } catch(e) {}
       updateInstallAll();
-    }
-
-    function malCopy() {
-      var url = document.getElementById('mal-url-display').textContent;
-      if (!url) return;
-      navigator.clipboard.writeText(url).then(function() {
-        var el = document.getElementById('mal-copied');
-        el.textContent = 'Copied!';
-        setTimeout(function() { el.textContent = ''; }, 2000);
-      });
     }
 
     // Restore MAL from localStorage
@@ -285,23 +278,26 @@ function configurePageHandler(req, res) {
     })();
 
     // IMDB — user ID input generates install URL
-    var IMDB_RE = /^(ur\d{4,15}|p\.[a-z0-9]{10,50})$/;
+    var IMDB_RE = /^(ur\\d{4,15}|p\\.[a-z0-9]{10,50})$/
 
     document.getElementById('imdb-userid') && document.getElementById('imdb-userid').addEventListener('input', imdbUserIdChanged);
 
     function imdbUserIdChanged() {
       var val = document.getElementById('imdb-userid').value.trim();
       var hint = document.getElementById('imdb-hint');
-      var result = document.getElementById('imdb-result');
       if (!val) {
         hint.innerHTML = 'Found in your <a href="https://www.imdb.com/user/" target="_blank" rel="noopener" style="color:#5b6af5">IMDB profile URL</a> (e.g. ur12345678 or p.xxxx). Your watchlist must be public.';
         hint.classList.remove('err');
-        result.style.display = 'none';
+        var imdbCb = document.getElementById('imdb-include');
+        var imdbWrap = document.getElementById('imdb-cb-wrap');
+        imdbCb.disabled = true; imdbCb.checked = false;
+        imdbWrap.classList.remove('enabled');
+        document.getElementById('imdb-status').classList.remove('show');
         updateInstallAll();
         return;
       }
       // Allow pasting full profile URL
-      var urlMatch = val.match(/(ur\d{4,15}|p\.[a-z0-9]{10,50})/);
+      var urlMatch = val.match(/(ur\\d{4,15}|p\\.[a-z0-9]{10,50})/);
       if (urlMatch) {
         val = urlMatch[1];
         document.getElementById('imdb-userid').value = val;
@@ -309,27 +305,22 @@ function configurePageHandler(req, res) {
       if (!IMDB_RE.test(val)) {
         hint.textContent = 'Invalid IMDB User ID. Paste your IMDB profile URL or enter the ID directly.';
         hint.classList.add('err');
-        result.style.display = 'none';
+        var imdbCb2 = document.getElementById('imdb-include');
+        var imdbWrap2 = document.getElementById('imdb-cb-wrap');
+        imdbCb2.disabled = true; imdbCb2.checked = false;
+        imdbWrap2.classList.remove('enabled');
+        document.getElementById('imdb-status').classList.remove('show');
         return;
       }
       hint.textContent = '';
       hint.classList.remove('err');
-      var url = BASE + '/imdb/' + encodeURIComponent(val) + '/manifest.json';
-      document.getElementById('imdb-url-display').textContent = url;
-      document.getElementById('imdb-stremio').href = 'stremio://' + url.replace(/^https?:\\/\\//, '');
-      result.style.display = 'block';
+      var imdbCbOk = document.getElementById('imdb-include');
+      var imdbWrapOk = document.getElementById('imdb-cb-wrap');
+      imdbCbOk.disabled = false; imdbCbOk.checked = true;
+      imdbWrapOk.classList.add('enabled');
+      document.getElementById('imdb-status').classList.add('show');
       try { localStorage.setItem('imdb-userid', val); } catch(e) {}
       updateInstallAll();
-    }
-
-    function imdbCopy() {
-      var url = document.getElementById('imdb-url-display').textContent;
-      if (!url) return;
-      navigator.clipboard.writeText(url).then(function() {
-        var el = document.getElementById('imdb-copied');
-        el.textContent = 'Copied!';
-        setTimeout(function() { el.textContent = ''; }, 2000);
-      });
     }
 
     // Restore IMDB user ID from localStorage
@@ -347,18 +338,20 @@ function configurePageHandler(req, res) {
     // --- Install All (combined addon) ---
     function getServiceConfig() {
       var cfg = {};
+      var alCb = document.getElementById('al-include');
       var alUrl = document.getElementById('al-url').textContent;
-      if (alUrl) {
-        // Extract token from URL: BASE/anilist/<token>/manifest.json
+      if (alCb && alCb.checked && alUrl) {
         var alMatch = alUrl.match(/\\/anilist\\/([^\\/]+)\\/manifest\\.json/);
         if (alMatch) cfg.anilist = decodeURIComponent(alMatch[1]);
       }
+      var malCb = document.getElementById('mal-include');
       var malInput = document.getElementById('mal-username');
-      if (malInput && malInput.value.trim() && /^[a-zA-Z0-9_-]{2,20}$/.test(malInput.value.trim())) {
+      if (malCb && malCb.checked && malInput && malInput.value.trim() && /^[a-zA-Z0-9_-]{2,20}$/.test(malInput.value.trim())) {
         cfg.mal = malInput.value.trim();
       }
+      var imdbCb = document.getElementById('imdb-include');
       var imdbInput = document.getElementById('imdb-userid');
-      if (imdbInput && imdbInput.value.trim() && /^(ur\\d{4,15}|p\\.[a-z0-9]{10,50})$/.test(imdbInput.value.trim())) {
+      if (imdbCb && imdbCb.checked && imdbInput && imdbInput.value.trim() && /^(ur\\d{4,15}|p\\.[a-z0-9]{10,50})$/.test(imdbInput.value.trim())) {
         cfg.imdb = imdbInput.value.trim();
       }
       return cfg;
@@ -381,14 +374,19 @@ function configurePageHandler(req, res) {
     function updateInstallAll() {
       var cfg = getServiceConfig();
       var keys = Object.keys(cfg);
-      var section = document.getElementById('install-all-section');
       var btn = document.getElementById('install-all-btn');
+      var hint = document.getElementById('install-hint');
       if (keys.length >= 1) {
         var url = buildCombinedUrl(cfg);
         btn.href = 'stremio://' + url.replace(/^https?:\\/\\//, '');
-        section.style.display = 'block';
+        btn.style.pointerEvents = '';
+        btn.style.opacity = '1';
+        hint.textContent = keys.length === 1 ? 'Installing 1 service.' : 'Installing ' + keys.length + ' services combined.';
       } else {
-        section.style.display = 'none';
+        btn.href = '#';
+        btn.style.pointerEvents = 'none';
+        btn.style.opacity = '.4';
+        hint.textContent = 'Connect a service above, then check it to install.';
       }
     }
 
