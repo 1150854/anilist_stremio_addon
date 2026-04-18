@@ -349,7 +349,7 @@ app.get('/', (req, res) => {
         <p style="font-size:0.9rem; color:#888; margin-bottom:0.5rem;">
           Authenticate to enable automatic progress syncing when you watch episodes.
         </p>
-        <button class="auth-btn" id="al-auth-btn" onclick="authenticate('anilist')" style="display:none;">
+        <button class="auth-btn" id="al-auth-btn" onclick="authenticate('anilist')">
           🔐 Authenticate with AniList
         </button>
         <div class="auth-status" id="al-auth-status" style="font-size:0.9rem; margin-top:0.5rem;"></div>
@@ -453,13 +453,18 @@ app.get('/', (req, res) => {
       });
     }
 
+    function getServicePrefix(service) {
+      return service === 'anilist' ? 'al' : service;
+    }
+
     async function checkAuthStatus(service, username) {
       if (!username) return;
 
-      const authBtn = document.getElementById(service + '-auth-btn');
-      const authStatus = document.getElementById(service + '-auth-status');
-      const clientId = document.getElementById(service + '-client-id').value.trim();
-      const clientSecret = document.getElementById(service + '-client-secret').value.trim();
+      const prefix = getServicePrefix(service);
+      const authBtn = document.getElementById(prefix + '-auth-btn');
+      const authStatus = document.getElementById(prefix + '-auth-status');
+      const clientId = document.getElementById(prefix + '-client-id').value.trim();
+      const clientSecret = document.getElementById(prefix + '-client-secret').value.trim();
 
       // Show auth button if credentials are provided
       if (clientId && clientSecret) {
@@ -492,9 +497,10 @@ app.get('/', (req, res) => {
     }
 
     function authenticate(service) {
-      const username = document.getElementById(service + '-username').value.trim();
-      const clientId = document.getElementById(service + '-client-id').value.trim();
-      const clientSecret = document.getElementById(service + '-client-secret').value.trim();
+      const prefix = getServicePrefix(service);
+      const username = document.getElementById(prefix + '-username').value.trim();
+      const clientId = document.getElementById(prefix + '-client-id').value.trim();
+      const clientSecret = document.getElementById(prefix + '-client-secret').value.trim();
 
       if (!username) {
         alert('Please enter your username first');
@@ -516,21 +522,53 @@ app.get('/', (req, res) => {
 
     // Add listeners for credential inputs
     function setupCredentialInputs(service) {
-      const clientIdInput = document.getElementById(service + '-client-id');
-      const clientSecretInput = document.getElementById(service + '-client-secret');
+      const prefix = getServicePrefix(service);
+      const clientIdInput = document.getElementById(prefix + '-client-id');
+      const clientSecretInput = document.getElementById(prefix + '-client-secret');
 
       if (clientIdInput) {
         clientIdInput.addEventListener('input', () => {
-          const username = document.getElementById(service + '-username').value.trim();
+          const username = document.getElementById(prefix + '-username').value.trim();
           if (username) checkAuthStatus(service, username);
         });
       }
 
       if (clientSecretInput) {
         clientSecretInput.addEventListener('input', () => {
-          const username = document.getElementById(service + '-username').value.trim();
+          const username = document.getElementById(prefix + '-username').value.trim();
           if (username) checkAuthStatus(service, username);
         });
+      }
+    }
+
+    // Load stored credentials into form fields
+    async function loadStoredCredentials() {
+      try {
+        // Load AniList credentials
+        const anilistResponse = await fetch(BASE + '/auth/anilist/credentials');
+        if (anilistResponse.ok) {
+          const anilistCreds = await anilistResponse.json();
+          if (anilistCreds.client_id) {
+            document.getElementById('al-client-id').value = anilistCreds.client_id;
+          }
+          if (anilistCreds.client_secret) {
+            document.getElementById('al-client-secret').value = anilistCreds.client_secret;
+          }
+        }
+
+        // Load MAL credentials
+        const malResponse = await fetch(BASE + '/auth/mal/credentials');
+        if (malResponse.ok) {
+          const malCreds = await malResponse.json();
+          if (malCreds.client_id) {
+            document.getElementById('mal-client-id').value = malCreds.client_id;
+          }
+          if (malCreds.client_secret) {
+            document.getElementById('mal-client-secret').value = malCreds.client_secret;
+          }
+        }
+      } catch (error) {
+        console.error('Error loading stored credentials:', error);
       }
     }
 
@@ -538,6 +576,9 @@ app.get('/', (req, res) => {
     setupInput('mal-username', 'mal-hint', 'mal-result', 'mal-url', 'mal-stremio', 'mal');
     setupCredentialInputs('anilist');
     setupCredentialInputs('mal');
+
+    // Load stored credentials when page loads
+    loadStoredCredentials();
 
     function copyUrl(urlId) {
       const url = document.getElementById(urlId).textContent;
@@ -570,6 +611,28 @@ app.get('/auth/:service/:username/status', (req, res) => {
 
   const authenticated = tokenManager.hasValidTokens(service, username);
   res.json({ authenticated });
+});
+
+/**
+ * GET /auth/:service/credentials
+ *
+ * Get stored OAuth credentials for a service
+ */
+app.get('/auth/:service/credentials', (req, res) => {
+  const { service } = req.params;
+
+  if (!VALID_SERVICES.has(service)) {
+    return res.status(HTTP_STATUS.BAD_REQUEST).json({ error: 'Unknown service' });
+  }
+
+  // For demo purposes, return credentials for any user (since we store them globally)
+  // In a real app, you'd want to associate credentials with specific users
+  const credentials = tokenManager.getCredentials(service, 'dummy');
+  if (credentials) {
+    res.json(credentials);
+  } else {
+    res.json({ client_id: '', client_secret: '' });
+  }
 });
 
 /**
@@ -673,6 +736,18 @@ app.get('/:service/:username/stream/:type/:id.json', async (req, res) => {
     const videoInfo = {};
     if (season) videoInfo.season = parseInt(season, 10);
     if (episode) videoInfo.episode = parseInt(episode, 10);
+
+    // If no episode in query params, try to extract from ID (format: service:id:episode)
+    if (!episode && id.includes(':')) {
+      const parts = id.split(':');
+      if (parts.length >= 3) {
+        const potentialEpisode = parseInt(parts[2], 10);
+        if (!isNaN(potentialEpisode) && potentialEpisode > 0) {
+          videoInfo.episode = potentialEpisode;
+          console.log(`Extracted episode ${potentialEpisode} from ID: ${id}`);
+        }
+      }
+    }
 
     const stream = await addonInterface.getStream(type, id, videoInfo, username, service, config.malClientId);
     res.json(stream);

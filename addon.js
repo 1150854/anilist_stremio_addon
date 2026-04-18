@@ -190,30 +190,49 @@ async function getStream(type, id, videoInfo, username, service, malClientId) {
 
     // Extract anime ID from the content ID
     let animeId;
+    let actualService = service;
+
     if (service === 'mal') {
       if (!id.startsWith('mal:')) {
         return { streams: [] };
       }
       animeId = id.substring(4); // Remove 'mal:' prefix
     } else {
-      // Default: AniList
-      if (!id.startsWith('anilist:')) {
+      // Default: AniList - handle both anilist: and kitsu: IDs
+      if (id.startsWith('anilist:')) {
+        animeId = id.substring(8); // Remove 'anilist:' prefix
+      } else if (id.startsWith('kitsu:')) {
+        // Extract Kitsu ID (may include season info like kitsu:46729:3)
+        const kitsuId = id.split(':')[1];
+        try {
+          // Map Kitsu ID to AniList ID
+          const anilistId = await anilistService.mapKitsuToAniList(kitsuId);
+          if (!anilistId) {
+            console.log(`Could not map Kitsu ID ${kitsuId} to AniList ID`);
+            return { streams: [] };
+          }
+          animeId = anilistId;
+          console.log(`Mapped Kitsu ID ${kitsuId} to AniList ID ${animeId}`);
+        } catch (mappingError) {
+          console.error(`Failed to map Kitsu ID ${kitsuId}:`, mappingError.message);
+          return { streams: [] };
+        }
+      } else {
         return { streams: [] };
       }
-      animeId = id.substring(8); // Remove 'anilist:' prefix
     }
 
     // Handle progress update if videoInfo contains episode information
     if (videoInfo && videoInfo.episode) {
       try {
-        if (service === 'mal') {
+        if (actualService === 'mal') {
           await malService.updateProgress(animeId, videoInfo.episode, username, malClientId);
         } else {
           await anilistService.updateProgress(animeId, videoInfo.episode, username);
         }
-        console.log(`Updated progress for ${service} anime ${animeId}: episode ${videoInfo.episode}`);
+        console.log(`Updated progress for ${actualService} anime ${animeId}: episode ${videoInfo.episode}`);
       } catch (progressError) {
-        console.error(`Failed to update progress for ${service} anime ${animeId}:`, progressError.message);
+        console.error(`Failed to update progress for ${actualService} anime ${animeId}:`, progressError.message);
         // Don't fail the stream request if progress update fails
       }
     }
