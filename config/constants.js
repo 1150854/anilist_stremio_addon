@@ -29,7 +29,7 @@ const DEFAULT_PORT = 3000;
  */
 const ADDON_MANIFEST = {
   id: 'community.anilist-stremio',
-  version: '1.5.0',
+  version: '1.6.0',
   name: 'AniList Sync',
   description: 'Syncs your AniList Currently Watching anime to Stremio library',
   types: ['anime', 'series', 'movie'],
@@ -43,7 +43,7 @@ const ADDON_MANIFEST = {
  */
 const MAL_MANIFEST = {
   id: 'community.mal-stremio',
-  version: '1.4.0',
+  version: '1.6.0',
   name: 'MyAnimeList Sync',
   description: 'Syncs your MyAnimeList Currently Watching anime to Stremio library',
   types: ['anime', 'series', 'movie'],

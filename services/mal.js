@@ -370,7 +370,7 @@ async function updateProgress(animeId, episode, username, clientId) {
     
     const response = await axios.patch(
       `${MAL_API_URL}/anime/${animeId}/my_list_status`,
-      { num_watched_episodes: episode },
+      new URLSearchParams({ num_watched_episodes: episode }),
       {
         headers: {
           'Authorization': `Bearer ${tokens.access_token}`,
