@@ -13,15 +13,16 @@
 const axios = require('axios');
 const { MAL_API_URL, POSTER_SHAPES } = require('../config/constants');
 const tokenManager = require('../config/tokens');
-const mappingsStore = require('../config/mappings');
-const { mapKitsuToAniList } = require('./anilist');
-const { buildMultiSeasonVideos } = require('./meta');
+const { TTLCache } = require('../config/cache');
+const mappings = require('../config/mappings');
+
+// 5-minute TTL for anime list catalog responses, keyed by username:status
+const animeListCache = new TTLCache(5 * 60 * 1000);
+// 30-minute TTL for single anime meta, keyed by id
+const animeMetaCache = new TTLCache(30 * 60 * 1000);
 
 const KITSU_API_URL = 'https://kitsu.io/api/edge';
 const KITSU_BATCH_SIZE = 20;
-
-// Cache MAL ID → root Kitsu ID to avoid redundant traversal API calls
-const rootMalKitsuCache = new Map();
 
 /**
  * Fields to request from the MAL anime list endpoint
@@ -37,8 +38,7 @@ const LIST_FIELDS = [
   'start_season',
   'status',
   'media_type',
-  'alternative_titles',
-  'related_anime'
+  'alternative_titles'
 ].join(',');
 
 /**
@@ -72,6 +72,12 @@ const META_FIELDS = [
  */
 async function getAnimeList(username, clientId, status) {
   try {
+    const cacheKey = `${username}:${status}`;
+    const cached = animeListCache.get(cacheKey);
+    if (cached) {
+      console.log(`[cache] Returning cached ${status} MAL list for ${username} (${cached.length} items)`);
+      return cached;
+    }
     console.log(`Fetching ${status} anime from MAL for user: ${username}`);
 
     const response = await axios.get(
@@ -102,42 +108,9 @@ async function getAnimeList(username, clientId, status) {
     const kitsuIdMap = await fetchKitsuIdMap(malIds);
     console.log(`Kitsu ID mapping: ${Object.keys(kitsuIdMap).length}/${malIds.length} resolved`);
 
-    // Deduplicate: if both a root season and its sequel(s) are in the list,
-    // only keep the root so Stremio shows one multi-season entry per franchise.
-    const allMalIds = new Set(data.map(e => String(e.node.id)));
-    const sequelMalIds = new Set();
-    for (const entry of data) {
-      for (const rel of entry.node.related_anime || []) {
-        if (rel.relation_type === 'sequel' && allMalIds.has(String(rel.node.id))) {
-          sequelMalIds.add(String(rel.node.id));
-        }
-      }
-    }
-    const rootEntries = data.filter(e => !sequelMalIds.has(String(e.node.id)));
-    if (sequelMalIds.size > 0) {
-      console.log(`Deduped ${sequelMalIds.size} MAL sequel entries — showing ${rootEntries.length} root entries`);
-    }
-
-    // For entries that survived dedup but are still non-root (their prequel is in a
-    // different status list e.g. Completed), find the root's Kitsu ID.
-    // Run sequentially to avoid hammering the MAL API with parallel requests.
-    const finalEntries = [];
-    for (const entry of rootEntries) {
-      const prequelRel = (entry.node.related_anime || []).find(r => r.relation_type === 'prequel');
-      if (!prequelRel) {
-        finalEntries.push(entry);
-        continue;
-      }
-      const rootKitsuId = await findRootMalKitsuId(prequelRel.node.id, clientId);
-      if (!rootKitsuId) {
-        finalEntries.push(entry);
-        continue;
-      }
-      console.log(`Non-root MAL:${entry.node.id} → root kitsu:${rootKitsuId}`);
-      finalEntries.push({ ...entry, _rootKitsuId: rootKitsuId });
-    }
-
-    return finalEntries.map(entry => transformToStremioMeta(entry, kitsuIdMap));
+    const result = data.map(entry => transformToStremioMeta(entry, kitsuIdMap));
+    animeListCache.set(cacheKey, result);
+    return result;
 
   } catch (error) {
     if (error.response) {
@@ -183,6 +156,12 @@ async function getAnimeMeta(id, clientId) {
       return await fetchKitsuMeta(id);
     }
 
+    const cached = animeMetaCache.get(id);
+    if (cached) {
+      console.log(`[cache] Returning cached MAL meta for ${id}`);
+      return cached;
+    }
+
     const malId = id.replace('mal:', '');
     console.log(`Fetching MAL metadata for anime ID: ${malId}`);
 
@@ -200,7 +179,9 @@ async function getAnimeMeta(id, clientId) {
       throw new Error('Invalid response structure from MAL API');
     }
 
-    return transformSingleToMeta(anime);
+    const meta = transformSingleToMeta(anime);
+    animeMetaCache.set(id, meta);
+    return meta;
 
   } catch (error) {
     if (error.response?.status === 404) {
@@ -223,6 +204,11 @@ async function getAnimeMeta(id, clientId) {
  * @returns {Promise<Object>} Stremio meta object
  */
 async function fetchKitsuMeta(id) {
+  const cached = animeMetaCache.get(id);
+  if (cached) {
+    console.log(`[cache] Returning cached Kitsu meta for ${id}`);
+    return cached;
+  }
   const kitsuId = id.replace('kitsu:', '');
   console.log(`Fetching Kitsu metadata for MAL-sourced anime ID: ${kitsuId}`);
 
@@ -247,21 +233,9 @@ async function fetchKitsuMeta(id) {
     ? attrs.synopsis.replace(/<[^>]*>/g, '').trim()
     : '';
 
-  // Build multi-season videos by mapping Kitsu→AniList and walking the SEQUEL chain.
-  // This surfaces all seasons even when Kitsu only knows about the root entry.
-  let videos;
-  try {
-    const anilistId = await mapKitsuToAniList(kitsuId);
-    if (anilistId) {
-      videos = await buildMultiSeasonVideos(anilistId, id);
-    }
-  } catch (err) {
-    console.warn(`fetchKitsuMeta: could not build videos for kitsu:${kitsuId}: ${err.message}`);
-  }
-
-  return {
+  const meta = {
     id,
-    type: attrs.subtype === 'movie' ? 'movie' : 'series',
+    type: 'anime',
     name: title,
     poster: attrs.posterImage?.large || attrs.posterImage?.medium,
     posterShape: POSTER_SHAPES.PORTRAIT,
@@ -269,9 +243,10 @@ async function fetchKitsuMeta(id) {
     description: cleanDescription,
     imdbRating: rating,
     releaseInfo: year ? `${year}` : undefined,
-    year,
-    ...(videos && videos.length > 0 && { videos })
+    year
   };
+  animeMetaCache.set(id, meta);
+  return meta;
 }
 
 /**
@@ -287,30 +262,28 @@ async function fetchKitsuMeta(id) {
 async function fetchKitsuIdMap(malIds) {
   if (!malIds.length) return {};
 
-  // Seed from persistent store — skip any IDs we already know
-  const persistent = mappingsStore.getMalKitsuMap();
   const map = {};
-  const missing = [];
+  const uncached = [];
+
   for (const id of malIds) {
-    const stored = persistent[String(id)];
-    if (stored !== undefined) {
-      if (stored) map[String(id)] = stored; // null = known-no-mapping, skip
+    const cached = mappings.get('mal_to_kitsu', id);
+    if (cached) {
+      map[String(id)] = cached;
     } else {
-      missing.push(id);
+      uncached.push(id);
     }
   }
 
-  if (missing.length === 0) {
-    console.log(`Kitsu ID mapping: ${Object.keys(map).length}/${malIds.length} from cache (no API calls needed)`);
+  if (!uncached.length) {
+    console.log(`[cache] All ${malIds.length} Kitsu IDs resolved from persistent mappings`);
     return map;
   }
 
-  console.log(`Kitsu ID mapping: ${malIds.length - missing.length} cached, fetching ${missing.length} from Kitsu API`);
+  console.log(`[cache] Fetching Kitsu IDs for ${uncached.length}/${malIds.length} uncached MAL entries`);
 
-  const newEntries = {};
   const chunks = [];
-  for (let i = 0; i < missing.length; i += KITSU_BATCH_SIZE) {
-    chunks.push(missing.slice(i, i + KITSU_BATCH_SIZE));
+  for (let i = 0; i < uncached.length; i += KITSU_BATCH_SIZE) {
+    chunks.push(uncached.slice(i, i + KITSU_BATCH_SIZE));
   }
 
   await Promise.all(chunks.map(async (chunk) => {
@@ -319,6 +292,7 @@ async function fetchKitsuIdMap(malIds) {
       // but Kitsu requires literal commas for multi-value filters.
       const qs = `filter[externalSite]=myanimelist/anime&filter[externalId]=${chunk.join(',')}&include=item&page[limit]=${KITSU_BATCH_SIZE}`;
       const url = `${KITSU_API_URL}/mappings?${qs}`;
+      console.log(`Kitsu batch URL: ${url}`);
       const response = await axios.get(url, {
         headers: { 'Accept': 'application/vnd.api+json' },
         timeout: 10000
@@ -329,21 +303,14 @@ async function fetchKitsuIdMap(malIds) {
         const malId = item.attributes?.externalId;
         const kitsuId = item.relationships?.item?.data?.id;
         if (kitsuId && malId != null) {
-          newEntries[String(malId)] = String(kitsuId);
           map[String(malId)] = String(kitsuId);
+          mappings.set('mal_to_kitsu', malId, kitsuId);
         }
       }
     } catch (err) {
       console.warn(`Kitsu ID batch lookup failed: ${err.message}`);
     }
   }));
-
-  // Store null sentinel for IDs confirmed to have no Kitsu mapping so we
-  // don't re-query them on the next catalog load.
-  for (const id of missing) {
-    if (!(String(id) in newEntries)) newEntries[String(id)] = null;
-  }
-  mappingsStore.setMalKitsuEntries(newEntries);
 
   return map;
 }
@@ -359,8 +326,7 @@ async function fetchKitsuIdMap(malIds) {
 function transformToStremioMeta(entry, kitsuIdMap = {}) {
   const anime = entry.node;
   const listStatus = entry.list_status;
-  // Use root kitsu ID if this entry was identified as a non-root sequel
-  const kitsuId = entry._rootKitsuId || kitsuIdMap[String(anime.id)] || null;
+  const kitsuId = kitsuIdMap[String(anime.id)] || null;
   return buildMeta(anime, listStatus?.num_episodes_watched ?? 0, kitsuId);
 }
 
@@ -467,59 +433,6 @@ async function updateProgress(animeId, episode, username, clientId) {
 }
 
 /**
- * Traverses MAL's prequel chain upward from a given MAL ID to find the
- * franchise root (S1), then returns its Kitsu ID.
- *
- * @param {string|number} startMalId - MAL ID to start traversal from
- * @param {string} clientId - MAL API Client ID
- * @returns {Promise<string|null>} Kitsu ID of the root, or null
- */
-async function findRootMalKitsuId(startMalId, clientId) {
-  const cacheKey = String(startMalId);
-  if (rootMalKitsuCache.has(cacheKey)) return rootMalKitsuCache.get(cacheKey);
-
-  let currentId = String(startMalId);
-  for (let depth = 0; depth < 5; depth++) {
-    let response;
-    for (let attempt = 0; attempt < 3; attempt++) {
-      try {
-        response = await axios.get(
-          `${MAL_API_URL}/anime/${encodeURIComponent(currentId)}`,
-          {
-            params: { fields: 'related_anime' },
-            headers: { 'X-MAL-CLIENT-ID': clientId },
-            timeout: 10000
-          }
-        );
-        break;
-      } catch (err) {
-        if (err.response?.status === 429 && attempt < 2) {
-          const wait = (attempt + 1) * 2000;
-          console.warn(`MAL 429 in findRootMalKitsuId(${currentId}), retrying in ${wait}ms...`);
-          await new Promise(r => setTimeout(r, wait));
-        } else {
-          console.error(`findRootMalKitsuId traversal failed at MAL id ${currentId}:`, err.message);
-          return null;
-        }
-      }
-    }
-    if (!response) return null;
-    const related = response.data?.related_anime || [];
-    const prequelRel = related.find(r => r.relation_type === 'prequel');
-    if (!prequelRel) {
-      // currentId has no prequel — it IS the root; map to Kitsu
-      const kitsuMap = await fetchKitsuIdMap([parseInt(currentId, 10)]);
-      const kitsuId = kitsuMap[currentId] || null;
-      rootMalKitsuCache.set(cacheKey, kitsuId);
-      rootMalKitsuCache.set(currentId, kitsuId);
-      return kitsuId;
-    }
-    currentId = String(prequelRel.node.id);
-  }
-  return null;
-}
-
-/**
  * Fetches the authenticated user's username from MAL using their access token.
  *
  * @async
@@ -544,47 +457,8 @@ module.exports = {
   getAnimeMeta,
   updateProgress,
   mapKitsuToMal,
-  getSeasonMalId,
   getAuthenticatedUsername
 };
-
-/**
- * Traverses MAL's sequel chain to find the MAL ID for a specific season.
- * Season 1 = rootMalId, Season 2 = first sequel, Season 3 = second sequel, etc.
- *
- * @param {string} rootMalId - MAL ID of the root/first season
- * @param {number} season - Season number (1-based)
- * @param {string} clientId - MAL API Client ID
- * @returns {Promise<string>} MAL ID for the requested season (or last known if chain ends early)
- */
-async function getSeasonMalId(rootMalId, season, clientId) {
-  if (!season || season <= 1) return rootMalId;
-  let currentId = rootMalId;
-  for (let i = 1; i < season; i++) {
-    try {
-      const response = await axios.get(
-        `${MAL_API_URL}/anime/${encodeURIComponent(currentId)}`,
-        {
-          params: { fields: 'related_anime' },
-          headers: { 'X-MAL-CLIENT-ID': clientId },
-          timeout: 10000
-        }
-      );
-      const related = response.data?.related_anime || [];
-      const sequel = related.find(r => r.relation_type === 'sequel');
-      if (!sequel) {
-        console.log(`No sequel found for MAL ID ${currentId} at season ${i + 1}, using last resolved ID`);
-        break;
-      }
-      currentId = String(sequel.node.id);
-      console.log(`Season ${i + 1} resolved to MAL ID ${currentId}`);
-    } catch (err) {
-      console.error(`getSeasonMalId failed at season ${i + 1}:`, err.message);
-      break;
-    }
-  }
-  return currentId;
-}
 
 /**
  * Maps a Kitsu anime ID to a MAL anime ID.
@@ -594,6 +468,8 @@ async function getSeasonMalId(rootMalId, season, clientId) {
  * @returns {Promise<string|null>} MAL ID or null if not found
  */
 async function mapKitsuToMal(kitsuId) {
+  const cached = mappings.get('kitsu_to_mal', kitsuId);
+  if (cached) return cached;
   try {
     const response = await axios.get(
       `${KITSU_API_URL}/anime/${encodeURIComponent(kitsuId)}/mappings?filter[externalSite]=myanimelist/anime`,
@@ -603,7 +479,9 @@ async function mapKitsuToMal(kitsuId) {
       }
     );
     const malId = response.data?.data?.[0]?.attributes?.externalId;
-    return malId ? String(malId) : null;
+    const result = malId ? String(malId) : null;
+    if (result) mappings.set('kitsu_to_mal', kitsuId, result);
+    return result;
   } catch (err) {
     console.warn(`Kitsu→MAL mapping failed for kitsuId ${kitsuId}: ${err.message}`);
     return null;
