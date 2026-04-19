@@ -1,185 +1,94 @@
 /**
- * Persistent ID Mapping Store
+ * Persistent ID Mappings
  *
- * Saves cross-service ID mappings and season chain data to data/mappings.json
- * so they survive process restarts. API calls are skipped for any IDs already
- * present in the store.
+ * Loads/saves known good ID mappings from data/mappings.json so that
+ * previously resolved cross-service IDs (kitsu↔anilist, mal↔anilist,
+ * imdb↔anilist) are never re-fetched from the API.
  *
- * Sections:
- *   malToKitsu     — MAL ID (string) → Kitsu ID (string), kept indefinitely
- *   kitsuToAnilist — Kitsu ID (string) → AniList ID (string), kept indefinitely
- *   seasonChain    — AniList root ID → { chain, ts }, refreshed after 7 days
- *
- * Writes are debounced (5 s) so rapid sequential updates don't hammer disk I/O.
- *
- * @module config/mappings
+ * Writes are debounced (2 s) to avoid excessive disk IO.
  */
 
 const fs = require('fs');
 const path = require('path');
 
-const MAPPINGS_FILE = path.join(__dirname, '..', 'data', 'mappings.json');
-const SEASON_CHAIN_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+const MAPPINGS_PATH = path.join(__dirname, '../data/mappings.json');
 
-let _data = null;
-let _saveTimer = null;
-
-function _load() {
-  if (_data) return _data;
-  try {
-    if (fs.existsSync(MAPPINGS_FILE)) {
-      const raw = fs.readFileSync(MAPPINGS_FILE, 'utf8').trim();
-      if (raw) _data = JSON.parse(raw);
-    }
-  } catch (e) {
-    console.error('[mappings] Failed to load:', e.message);
-  }
-  if (!_data || typeof _data !== 'object') _data = {};
-  if (!_data.malToKitsu) _data.malToKitsu = {};
-  if (!_data.kitsuToAnilist) _data.kitsuToAnilist = {};
-  if (!_data.kitsuToImdb) _data.kitsuToImdb = {};
-  if (!_data.seasonChain) _data.seasonChain = {};
-  console.log(
-    `[mappings] Loaded — ` +
-    `${Object.keys(_data.malToKitsu).length} MAL→Kitsu, ` +
-    `${Object.keys(_data.kitsuToAnilist).length} Kitsu→AniList, ` +
-    `${Object.keys(_data.kitsuToImdb).length} Kitsu→IMDB, ` +
-    `${Object.keys(_data.seasonChain).length} season chain(s)`
-  );
-  return _data;
-}
-
-function _flush() {
-  _saveTimer = null;
-  if (!_data) return;
-  try {
-    const dir = path.dirname(MAPPINGS_FILE);
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(MAPPINGS_FILE, JSON.stringify(_data));
-  } catch (e) {
-    console.error('[mappings] Failed to save:', e.message);
-  }
-}
-
-function _scheduleSave() {
-  if (_saveTimer) return;
-  _saveTimer = setTimeout(_flush, 5000);
-}
-
-// ─── MAL → Kitsu ────────────────────────────────────────────────────────────
-
-/**
- * Returns the full persisted mal→kitsu map (object of malId → kitsuId).
- * @returns {Object}
- */
-function getMalKitsuMap() {
-  return _load().malToKitsu;
-}
-
-/**
- * Merges new malId→kitsuId entries into the persistent store.
- * Only writes if at least one entry is new or changed.
- * @param {Object} entries — { [malId: string]: kitsuId: string }
- */
-function setMalKitsuEntries(entries) {
-  const d = _load();
-  let changed = false;
-  for (const [k, v] of Object.entries(entries)) {
-    if (d.malToKitsu[String(k)] !== v) {
-      d.malToKitsu[String(k)] = v;
-      changed = true;
-    }
-  }
-  if (changed) _scheduleSave();
-}
-
-// ─── Kitsu → AniList ────────────────────────────────────────────────────────
-
-/**
- * Returns the persisted AniList ID for a Kitsu ID, or null if not stored.
- * @param {string} kitsuId
- * @returns {string|null}
- */
-function getKitsuAnilistId(kitsuId) {
-  return _load().kitsuToAnilist[String(kitsuId)] || null;
-}
-
-/**
- * Persists a Kitsu→AniList mapping.
- * @param {string} kitsuId
- * @param {string} anilistId
- */
-function setKitsuAnilistId(kitsuId, anilistId) {
-  const d = _load();
-  if (d.kitsuToAnilist[String(kitsuId)] !== String(anilistId)) {
-    d.kitsuToAnilist[String(kitsuId)] = String(anilistId);
-    _scheduleSave();
-  }
-}
-
-// ─── Kitsu → IMDB ────────────────────────────────────────────────────────────
-
-/**
- * Returns the persisted IMDB ID for a Kitsu ID, or null if not stored.
- * A stored empty string means "confirmed no mapping" (don't re-query).
- * @param {string} kitsuId
- * @returns {string|null|undefined} string = found, null = confirmed absent, undefined = unknown
- */
-function getKitsuImdbId(kitsuId) {
-  const val = _load().kitsuToImdb[String(kitsuId)];
-  if (val === undefined) return undefined; // never looked up
-  return val || null;                      // '' → null (confirmed absent)
-}
-
-/**
- * Persists a Kitsu→IMDB mapping.  Pass null/'' to record "no mapping found".
- * @param {string} kitsuId
- * @param {string|null} imdbId
- */
-function setKitsuImdbId(kitsuId, imdbId) {
-  const d = _load();
-  const stored = String(imdbId || '');
-  if (d.kitsuToImdb[String(kitsuId)] !== stored) {
-    d.kitsuToImdb[String(kitsuId)] = stored;
-    _scheduleSave();
-  }
-}
-
-// ─── Season chain (AniList root ID → ordered season list) ───────────────────
-
-/**
- * Returns the persisted season chain for an AniList root ID, or null if
- * not stored / older than 7 days.
- * @param {string|number} anilistId
- * @returns {Array|null}
- */
-function getSeasonChain(anilistId) {
-  const entry = _load().seasonChain[String(anilistId)];
-  if (!entry) return null;
-  if (Date.now() - entry.ts > SEASON_CHAIN_TTL_MS) return null; // stale
-  return entry.chain;
-}
-
-/**
- * Persists the season chain for an AniList root ID (with current timestamp).
- * @param {string|number} anilistId
- * @param {Array} chain
- */
-function setSeasonChain(anilistId, chain) {
-  _load().seasonChain[String(anilistId)] = { chain, ts: Date.now() };
-  _scheduleSave();
-}
-
-// Flush on process exit (handles graceful shutdowns)
-process.on('exit', _flush);
-
-module.exports = {
-  getMalKitsuMap,
-  setMalKitsuEntries,
-  getKitsuAnilistId,
-  setKitsuAnilistId,
-  getKitsuImdbId,
-  setKitsuImdbId,
-  getSeasonChain,
-  setSeasonChain
+const DEFAULT_MAPPINGS = {
+  kitsu_to_anilist: {},
+  mal_to_anilist: {},
+  anilist_to_mal: {},
+  imdb_to_anilist: {},
+  mal_to_kitsu: {},
+  kitsu_to_mal: {}
 };
+
+let data = { ...DEFAULT_MAPPINGS };
+
+function load() {
+  try {
+    if (fs.existsSync(MAPPINGS_PATH)) {
+      const raw = fs.readFileSync(MAPPINGS_PATH, 'utf8');
+      const parsed = JSON.parse(raw);
+      data = { ...DEFAULT_MAPPINGS, ...parsed };
+      // Ensure every expected namespace exists
+      for (const ns of Object.keys(DEFAULT_MAPPINGS)) {
+        if (!data[ns] || typeof data[ns] !== 'object') data[ns] = {};
+      }
+      const total = Object.values(data).reduce((s, v) => s + Object.keys(v).length, 0);
+      console.log(`[mappings] Loaded ${total} cached ID mappings from ${MAPPINGS_PATH}`);
+    } else {
+      data = { ...DEFAULT_MAPPINGS };
+      saveSoon();
+    }
+  } catch (err) {
+    console.error('[mappings] Failed to load mappings.json:', err.message);
+    data = { ...DEFAULT_MAPPINGS };
+  }
+}
+
+let saveTimer = null;
+
+function saveSoon() {
+  if (saveTimer) return;
+  saveTimer = setTimeout(() => {
+    saveTimer = null;
+    try {
+      fs.writeFileSync(MAPPINGS_PATH, JSON.stringify(data, null, 2), 'utf8');
+    } catch (err) {
+      console.error('[mappings] Failed to save mappings.json:', err.message);
+    }
+  }, 2000);
+}
+
+/**
+ * Retrieve a cached mapping.
+ *
+ * @param {string} namespace - e.g. 'kitsu_to_anilist'
+ * @param {string|number} key
+ * @returns {string|null} cached value, or null if not found
+ */
+function get(namespace, key) {
+  return data[namespace]?.[String(key)] ?? null;
+}
+
+/**
+ * Store a mapping and schedule a file write.
+ *
+ * @param {string} namespace
+ * @param {string|number} key
+ * @param {string|number} value
+ */
+function set(namespace, key, value) {
+  const k = String(key);
+  const v = String(value);
+  if (!data[namespace]) data[namespace] = {};
+  if (data[namespace][k] !== v) {
+    data[namespace][k] = v;
+    saveSoon();
+  }
+}
+
+// Initialize on require
+load();
+
+module.exports = { get, set };

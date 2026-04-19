@@ -15,29 +15,6 @@ const letterboxdService = require('./services/letterboxd');
 const tokenManager = require('./config/tokens');
 const { ADDON_MANIFEST, MAL_MANIFEST, IMDB_MANIFEST, LETTERBOXD_MANIFEST, ANILIST_CATALOGS, MAL_CATALOGS, IMDB_CATALOGS, LETTERBOXD_CATALOGS, COMBINED_ANIME_CATALOGS, COMBINED_MOVIE_CATALOGS } = require('./config/constants');
 
-// Catalog result cache — keyed by a string of the request params.
-// TTL: 5 minutes. Prevents hammering APIs on every Stremio scroll event.
-const CATALOG_CACHE_TTL_MS = 5 * 60 * 1000;
-const catalogCache = new Map();
-
-function getCatalogCacheKey(...args) {
-  return args.map(a => (a && typeof a === 'object' ? JSON.stringify(a) : String(a ?? ''))).join('|');
-}
-
-function getCachedCatalog(key) {
-  const entry = catalogCache.get(key);
-  if (!entry) return null;
-  if (Date.now() - entry.ts > CATALOG_CACHE_TTL_MS) {
-    catalogCache.delete(key);
-    return null;
-  }
-  return entry.value;
-}
-
-function setCachedCatalog(key, value) {
-  catalogCache.set(key, { value, ts: Date.now() });
-}
-
 // Maps the genre filter label to each service's status value
 const ANILIST_STATUS_MAP = {
   'Currently Watching': 'CURRENT',
@@ -172,42 +149,36 @@ async function getCatalog(type, id, extra, username, service, malClientId, lette
       }
     }
 
-    const cacheKey = getCatalogCacheKey(service, id, type, genreFilter, username);
-    const cached = getCachedCatalog(cacheKey);
-    if (cached) {
-      console.log(`[cache hit] ${service} catalog [${genreFilter}]: ${cached.metas.length} items`);
-      return cached;
-    }
-
-    let result;
-
     if (service === 'mal' && id === 'mal.list') {
       const malStatus = MAL_STATUS_MAP[genreFilter] || 'watching';
       const metas = await malService.getAnimeList(username, malClientId, malStatus);
       console.log(`Returning ${metas.length} items for MAL catalog [${genreFilter}]`);
-      result = { metas };
-    } else if (service === 'anilist' && id === 'anilist.list') {
+      return { metas };
+    }
+
+    if (service === 'anilist' && id === 'anilist.list') {
       const anilistStatus = ANILIST_STATUS_MAP[genreFilter] || 'CURRENT';
       const metas = await anilistService.getAnimeList(username, anilistStatus);
       console.log(`Returning ${metas.length} items for AniList catalog [${genreFilter}]`);
-      result = { metas };
-    } else if (service === 'imdb' && id === 'imdb.watchlist') {
+      return { metas };
+    }
+
+    if (service === 'imdb' && id === 'imdb.watchlist') {
       const allMetas = await imdbService.getWatchlist(username);
       const metas = allMetas.filter(m => m.type === type);
       console.log(`Returning ${metas.length} ${type} items for IMDB watchlist (${allMetas.length} total)`);
-      result = { metas };
-    } else if (service === 'letterboxd' && id === 'letterboxd.list') {
+      return { metas };
+    }
+
+    if (service === 'letterboxd' && id === 'letterboxd.list') {
       const letterboxdStatus = LETTERBOXD_STATUS_MAP[genreFilter] || 'Watchlist';
       const metas = await letterboxdService.getCatalog(username, letterboxdStatus, letterboxdClientId, letterboxdClientSecret);
       console.log(`Returning ${metas.length} items for Letterboxd catalog [${letterboxdStatus}]`);
-      result = { metas };
-    } else {
-      console.warn(`Unknown catalog ID: ${id}`);
-      return { metas: [] };
+      return { metas };
     }
 
-    setCachedCatalog(cacheKey, result);
-    return result;
+    console.warn(`Unknown catalog ID: ${id}`);
+    return { metas: [] };
 
   } catch (error) {
     console.error(`Error in getCatalog (${type}/${id}):`, error.message);
@@ -262,23 +233,6 @@ async function getMeta(type, id, username, service, malClientId) {
     }
 
     // Default: AniList
-    // AniList catalog entries resolve to kitsu: IDs when no IMDB mapping exists.
-    // Map kitsu→anilist so we can serve multi-season meta from getAnimeMeta().
-    if (id.startsWith('kitsu:')) {
-      try {
-        const kitsuId = id.replace('kitsu:', '');
-        const anilistId = await anilistService.mapKitsuToAniList(kitsuId);
-        if (anilistId) {
-          const meta = await anilistService.getAnimeMeta(`anilist:${anilistId}`);
-          // Preserve the original kitsu: id so stream progress still routes correctly
-          if (meta) return { meta: { ...meta, id } };
-        }
-      } catch (err) {
-        console.warn(`getMeta: kitsu→anilist failed for ${id}: ${err.message}`);
-      }
-      return { meta: null };
-    }
-
     if (!id.startsWith('anilist:')) {
       return { meta: null };
     }
@@ -323,24 +277,14 @@ async function getStream(type, id, videoInfo, username, service, malClientId) {
     if (service === 'mal') {
       if (id.startsWith('mal:')) {
         animeId = id.split(':')[1];
-        // Traverse sequel chain if watching a later season
-        if (videoInfo.season > 1) {
-          animeId = await malService.getSeasonMalId(animeId, videoInfo.season, malClientId).catch(() => animeId);
-          console.log(`Season ${videoInfo.season} resolved to MAL ID ${animeId}`);
-        }
       } else if (id.startsWith('kitsu:')) {
         // MAL catalog serves items with kitsu: IDs — map back to MAL ID for progress updates
         const kitsuId = id.split(':')[1];
         try {
-          let malId = await malService.mapKitsuToMal(kitsuId);
+          const malId = await malService.mapKitsuToMal(kitsuId);
           if (!malId) {
             console.log(`Could not map Kitsu ID ${kitsuId} to MAL ID`);
             return { streams: [] };
-          }
-          // Traverse sequel chain if watching a later season
-          if (videoInfo.season > 1) {
-            malId = await malService.getSeasonMalId(malId, videoInfo.season, malClientId).catch(() => malId);
-            console.log(`Season ${videoInfo.season} resolved to MAL ID ${malId}`);
           }
           animeId = malId;
           console.log(`Mapped Kitsu ID ${kitsuId} to MAL ID ${animeId}`);
@@ -355,25 +299,15 @@ async function getStream(type, id, videoInfo, username, service, malClientId) {
       // Default: AniList - handle both anilist: and kitsu: IDs
       if (id.startsWith('anilist:')) {
         animeId = id.split(':')[1]; // just the numeric ID
-        // Traverse sequel chain if watching a later season
-        if (videoInfo.season > 1) {
-          animeId = await anilistService.getSeasonAniListId(animeId, videoInfo.season).catch(() => animeId);
-          console.log(`Season ${videoInfo.season} resolved to AniList ID ${animeId}`);
-        }
       } else if (id.startsWith('kitsu:')) {
         // Extract Kitsu ID (may include season info like kitsu:46729:3)
         const kitsuId = id.split(':')[1];
         try {
           // Map Kitsu ID to AniList ID
-          let anilistId = await anilistService.mapKitsuToAniList(kitsuId);
+          const anilistId = await anilistService.mapKitsuToAniList(kitsuId);
           if (!anilistId) {
             console.log(`Could not map Kitsu ID ${kitsuId} to AniList ID`);
             return { streams: [] };
-          }
-          // If watching a season beyond the first, traverse AniList's sequel chain
-          if (videoInfo.season > 1) {
-            anilistId = await anilistService.getSeasonAniListId(anilistId, videoInfo.season);
-            console.log(`Season ${videoInfo.season} resolved to AniList ID ${anilistId}`);
           }
           animeId = anilistId;
           console.log(`Mapped Kitsu ID ${kitsuId} to AniList ID ${animeId}`);
@@ -385,14 +319,10 @@ async function getStream(type, id, videoInfo, username, service, malClientId) {
         // IMDB ID — bare (tt32550889) or series format (tt32550889:1:2)
         const imdbId = id.split(':')[0];
         try {
-          let anilistId = await anilistService.mapImdbToAniList(imdbId);
+          const anilistId = await anilistService.mapImdbToAniList(imdbId);
           if (!anilistId) {
             console.log(`Could not map IMDB ID ${id} to AniList ID`);
             return { streams: [] };
-          }
-          if (videoInfo.season > 1) {
-            anilistId = await anilistService.getSeasonAniListId(anilistId, videoInfo.season).catch(() => anilistId);
-            console.log(`Season ${videoInfo.season} resolved to AniList ID ${anilistId}`);
           }
           animeId = anilistId;
           console.log(`Mapped IMDB ID ${id} to AniList ID ${animeId}`);
@@ -468,6 +398,37 @@ async function getStream(type, id, videoInfo, username, service, malClientId) {
  * - combined.anime.list: AniList + MAL + IMDB (IMDB only under "Currently Watching")
  * - combined.movie.list: Letterboxd + IMDB (IMDB only under "Watchlist")
  */
+
+/**
+ * Normalises a title for duplicate detection.
+ * Strips punctuation/spaces so "Attack on Titan" and "attack on titan" are equal.
+ * @param {string} name
+ * @returns {string}
+ */
+function normalizeTitle(name) {
+  return (name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+/**
+ * Deduplicates an array of Stremio meta objects.
+ * First pass: exact ID match. Second pass: normalised title match.
+ * Items appearing earlier in the array take priority.
+ * @param {Array} results - Flat or nested array of meta objects
+ * @returns {Array}
+ */
+function deduplicateMetas(results) {
+  const seenIds = new Set();
+  const seenTitles = new Set();
+  return results.flat().filter(m => {
+    if (seenIds.has(m.id)) return false;
+    const norm = normalizeTitle(m.name);
+    if (norm && seenTitles.has(norm)) return false;
+    seenIds.add(m.id);
+    if (norm) seenTitles.add(norm);
+    return true;
+  });
+}
+
 async function getCombinedCatalog(type, id, extra, serviceConfig, malClientId, letterboxdClientId, letterboxdClientSecret) {
   // User navigated back to catalog — cancel any pending progress timers
   cancelPendingTimers(_userKey(serviceConfig));
@@ -478,15 +439,6 @@ async function getCombinedCatalog(type, id, extra, serviceConfig, malClientId, l
     if (match) genreFilter = decodeURIComponent(match[1]);
   }
   console.log(`Combined catalog request - ID: ${id}, Genre: ${genreFilter}`);
-
-  const cacheKey = getCatalogCacheKey('combined', id, type, genreFilter, _userKey(serviceConfig));
-  const cached = getCachedCatalog(cacheKey);
-  if (cached) {
-    console.log(`[cache hit] combined catalog [${genreFilter}]: ${cached.metas.length} items`);
-    return cached;
-  }
-
-  let result;
 
   if (id === 'combined.anime.list') {
     const promises = [];
@@ -519,33 +471,12 @@ async function getCombinedCatalog(type, id, extra, serviceConfig, malClientId, l
     }
 
     const results = await Promise.all(promises);
-    const seenIds = new Set();
-    const seenImdb = new Set();
-    const seenNames = new Set();
-    const metas = results.flat().filter(m => {
-      if (seenIds.has(m.id)) return false;
-      // Cross-service IMDB dedup: if a kitsu: entry maps to an IMDB ID that's
-      // already been seen (e.g. from AniList resolving to tt…), skip it.
-      if (/^tt\d+/.test(m.id)) {
-        if (seenImdb.has(m.id)) return false;
-        seenImdb.add(m.id);
-      } else if (m.id.startsWith('kitsu:')) {
-        const kitsuId = m.id.replace('kitsu:', '');
-        const imdbId = anilistService.getImdbForKitsuId(kitsuId);
-        if (imdbId && seenImdb.has(imdbId)) return false;
-        if (imdbId) seenImdb.add(imdbId);
-      }
-      // Deduplicate across services by normalised name so e.g. an AniList
-      // IMDB entry and a MAL Kitsu entry for the same franchise merge.
-      const normName = m.name?.toLowerCase().replace(/[^a-z0-9]/g, '');
-      if (normName && seenNames.has(normName)) return false;
-      seenIds.add(m.id);
-      if (normName) seenNames.add(normName);
-      return true;
-    });
+    const metas = deduplicateMetas(results);
     console.log(`Combined anime catalog [${genreFilter}]: ${metas.length} items`);
-    result = { metas };
-  } else if (id === 'combined.movie.list') {
+    return { metas };
+  }
+
+  if (id === 'combined.movie.list') {
     const promises = [];
 
     if (serviceConfig.letterboxd) {
@@ -566,20 +497,12 @@ async function getCombinedCatalog(type, id, extra, serviceConfig, malClientId, l
     }
 
     const results = await Promise.all(promises);
-    const seen = new Set();
-    const metas = results.flat().filter(m => {
-      if (seen.has(m.id)) return false;
-      seen.add(m.id);
-      return true;
-    });
+    const metas = deduplicateMetas(results);
     console.log(`Combined movie catalog [${genreFilter}]: ${metas.length} items`);
-    result = { metas };
-  } else {
-    return { metas: [] };
+    return { metas };
   }
 
-  setCachedCatalog(cacheKey, result);
-  return result;
+  return { metas: [] };
 }
 
 // Pending deferred progress-update timers, keyed by user identifier.
@@ -651,27 +574,9 @@ async function getCombinedStream(type, id, videoInfo, svcConfig, malClientId) {
       if (svcConfig.anilist) {
         anilistId = await anilistService.mapImdbToAniList(imdbId).catch(() => null);
         if (anilistId) console.log(`Mapped IMDB ID ${imdbId} to AniList ID ${anilistId}`);
-        // Also derive MAL ID from the resolved AniList ID
-        if (anilistId && svcConfig.mal && !malId) {
-          malId = await anilistService.mapAniListToMal(anilistId).catch(() => null);
-          if (malId) console.log(`Derived MAL ID ${malId} from AniList ID ${anilistId}`);
-        }
       }
     } else {
       return { streams: [] };
-    }
-
-    // If watching a season beyond S1, traverse sequel chains to get the correct entry
-    const season = videoInfo.season || 1;
-    if (season > 1) {
-      if (anilistId) {
-        anilistId = await anilistService.getSeasonAniListId(anilistId, season).catch(() => anilistId);
-        console.log(`Season ${season} AniList ID resolved to ${anilistId}`);
-      }
-      if (malId) {
-        malId = await malService.getSeasonMalId(malId, season, malClientId).catch(() => malId);
-        console.log(`Season ${season} MAL ID resolved to ${malId}`);
-      }
     }
 
     const updateNow = [];
@@ -730,93 +635,6 @@ async function getCombinedStream(type, id, videoInfo, svcConfig, malClientId) {
 }
 
 /**
- * Handles meta requests for the combined addon.
- *
- * Unlike the single-service getMeta(), this function tries multiple services
- * in priority order so that entries survive even when one service is missing
- * data (e.g. Kitsu only knows about S1 while AniList has the full SEQUEL chain).
- *
- * - tt* IDs   → null (Stremio resolves these natively via Cinemeta)
- * - kitsu: IDs → MAL service (Kitsu API + AniList-backed videos) → AniList fallback
- * - anilist: IDs → AniList service (with multi-season videos)
- * - mal: IDs   → MAL service
- *
- * @async
- * @param {string} type - Content type ("anime", "series", "movie")
- * @param {string} id - Stremio content ID
- * @param {Object} svcConfig - Combined service config (keys: anilist, mal, imdb, letterboxd)
- * @param {string} malClientId - MAL API Client ID
- * @returns {Promise<{meta: Object|null}>}
- */
-async function getCombinedMeta(type, id, svcConfig, malClientId) {
-  try {
-    console.log(`Combined meta request - Type: ${type}, ID: ${id}`);
-
-    if (type !== 'anime' && type !== 'series' && type !== 'movie') {
-      return { meta: null };
-    }
-
-    // tt* IDs: Stremio resolves these natively via Cinemeta — nothing to do here
-    if (/^tt\d+/.test(id)) return { meta: null };
-
-    // kitsu: IDs — try MAL service first (has Kitsu API + AniList-backed videos),
-    // then fall back to mapping Kitsu→AniList for enriched meta with season chain
-    if (id.startsWith('kitsu:')) {
-      if (malClientId) {
-        try {
-          const meta = await malService.getAnimeMeta(id, malClientId);
-          if (meta) return { meta };
-        } catch (err) {
-          console.warn(`getCombinedMeta: kitsu via mal service failed: ${err.message}`);
-        }
-      }
-      // Fallback: map Kitsu→AniList and use AniList meta (also has multi-season videos)
-      if (svcConfig.anilist) {
-        try {
-          const kitsuId = id.replace('kitsu:', '');
-          const anilistId = await anilistService.mapKitsuToAniList(kitsuId);
-          if (anilistId) {
-            const meta = await anilistService.getAnimeMeta(`anilist:${anilistId}`);
-            // Preserve the original kitsu: id so stream progress still routes correctly
-            if (meta) return { meta: { ...meta, id } };
-          }
-        } catch (err) {
-          console.warn(`getCombinedMeta: kitsu→anilist fallback failed: ${err.message}`);
-        }
-      }
-      return { meta: null };
-    }
-
-    // anilist: IDs — fetch directly with multi-season video support
-    if (id.startsWith('anilist:')) {
-      try {
-        const meta = await anilistService.getAnimeMeta(id);
-        return { meta };
-      } catch (err) {
-        console.error(`getCombinedMeta: anilist failed: ${err.message}`);
-        return { meta: null };
-      }
-    }
-
-    // mal: IDs — MAL service
-    if (id.startsWith('mal:') && malClientId) {
-      try {
-        const meta = await malService.getAnimeMeta(id, malClientId);
-        return { meta };
-      } catch (err) {
-        console.error(`getCombinedMeta: mal failed: ${err.message}`);
-        return { meta: null };
-      }
-    }
-
-    return { meta: null };
-  } catch (error) {
-    console.error(`Error in getCombinedMeta (${type}/${id}):`, error.message);
-    return { meta: null };
-  }
-}
-
-/**
  * Exported addon interface
  * 
  * This object provides the public API for the Stremio addon,
@@ -830,7 +648,6 @@ module.exports = {
   getCombinedStream,
   getCatalog,
   getMeta,
-  getCombinedMeta,
   getStream
 };
 
