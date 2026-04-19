@@ -124,7 +124,7 @@ const IMDB_MANIFEST = {
   version: '1.0.0',
   name: 'IMDB Watchlist',
   description: 'Browse your public IMDB watchlist in Stremio',
-  types: ['movie', 'series'],
+  types: ['movie', 'series', 'anime'],
   resources: ['catalog'],
   idPrefixes: ['tt'],
   contactEmail: 'contact@example.com'
@@ -155,6 +155,11 @@ const IMDB_CATALOGS = [
     type: 'series',
     id: 'imdb.watchlist',
     name: 'IMDB Watchlist'
+  },
+  {
+    type: 'anime',
+    id: 'imdb.watchlist',
+    name: 'IMDB Watchlist'
   }
 ];
 
@@ -170,6 +175,44 @@ const LETTERBOXD_CATALOGS = [
     name: 'Letterboxd',
     extra: [
       { name: 'genre', options: LETTERBOXD_STATUS_OPTIONS, isRequired: true }
+    ]
+  }
+];
+
+// Combined catalog: single entry merging AniList + MAL + IMDB (anime)
+const COMBINED_ANIME_STATUS_OPTIONS = [
+  'Currently Watching',
+  'On Hold',
+  'Plan to Watch',
+  'Dropped',
+  'Completed',
+  'Rewatching'
+];
+
+const COMBINED_ANIME_CATALOGS = [
+  {
+    type: 'anime',
+    id: 'combined.anime.list',
+    name: 'My Anime',
+    extra: [
+      { name: 'genre', options: COMBINED_ANIME_STATUS_OPTIONS, isRequired: true }
+    ]
+  }
+];
+
+// Combined catalog: single entry merging Letterboxd + IMDB (movies)
+const COMBINED_MOVIE_STATUS_OPTIONS = [
+  'Watchlist',
+  'Watched'
+];
+
+const COMBINED_MOVIE_CATALOGS = [
+  {
+    type: 'movie',
+    id: 'combined.movie.list',
+    name: 'My Movies',
+    extra: [
+      { name: 'genre', options: COMBINED_MOVIE_STATUS_OPTIONS, isRequired: true }
     ]
   }
 ];
@@ -242,6 +285,8 @@ module.exports = {
   MAL_CATALOGS,
   IMDB_CATALOGS,
   LETTERBOXD_CATALOGS,
+  COMBINED_ANIME_CATALOGS,
+  COMBINED_MOVIE_CATALOGS,
   ANILIST_STATUS,
   POSTER_SHAPES,
   HTTP_STATUS,

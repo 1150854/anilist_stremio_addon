@@ -763,23 +763,25 @@ app.get('/combined/:config/catalog/:type/:id/:extra?.json', async (req, res) => 
   const svcConfig = parseCombinedConfig(req.params.config);
   if (!svcConfig) return res.status(HTTP_STATUS.BAD_REQUEST).json({ error: 'Invalid combined config.' });
   const { type, id, extra } = req.params;
+
+  if (id === 'combined.anime.list' || id === 'combined.movie.list') {
+    try {
+      const catalog = await addonInterface.getCombinedCatalog(
+        type, id, extra, svcConfig,
+        config.malClientId, config.letterboxdClientId, config.letterboxdClientSecret
+      );
+      return res.json(catalog);
+    } catch (error) {
+      console.error('Combined merged catalog error:', error.message);
+      return res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json({ error: error.message || 'Failed to fetch catalog' });
+    }
+  }
+
   const service = serviceForCatalogId(id);
   if (!service || !svcConfig[service]) return res.status(HTTP_STATUS.NOT_FOUND).json({ error: 'Service not configured.' });
   try {
     const userParam = resolveServiceToken(service, svcConfig[service]);
-    if ((service === 'mal' || service === 'letterboxd') && !userParam) {
-      return res.status(HTTP_STATUS.UNAUTHORIZED).json({ error: `Invalid or expired ${service} token.` });
-    }
-    const catalog = await addonInterface.getCatalog(
-      type,
-      id,
-      extra,
-      userParam,
-      service,
-      config.malClientId,
-      config.letterboxdClientId,
-      config.letterboxdClientSecret
-    );
+    const catalog = await addonInterface.getCatalog(type, id, extra, userParam, service, config.malClientId, config.letterboxdClientId, config.letterboxdClientSecret);
     res.json(catalog);
   } catch (error) {
     console.error('Combined catalog error:', error.message);
@@ -815,13 +817,6 @@ app.get('/combined/:config/stream/:type/:id.json', async (req, res) => {
   const svcConfig = parseCombinedConfig(req.params.config);
   if (!svcConfig) return res.status(HTTP_STATUS.BAD_REQUEST).json({ error: 'Invalid combined config.' });
   const { type, id } = req.params;
-  // Determine service from ID prefix
-  let service = 'anilist';
-  if (id.startsWith('mal:')) {
-    service = 'mal';
-  }
-  const token = svcConfig[service];
-  if (!token) return res.json({ streams: [] });
   const videoInfo = {};
   if (req.query.season) videoInfo.season = parseInt(req.query.season, 10);
   if (req.query.episode) videoInfo.episode = parseInt(req.query.episode, 10);
@@ -837,9 +832,7 @@ app.get('/combined/:config/stream/:type/:id.json', async (req, res) => {
     }
   }
   try {
-    const userParam = resolveServiceToken(service, token);
-    if ((service === 'mal' || service === 'letterboxd') && !userParam) return res.json({ streams: [] });
-    const stream = await addonInterface.getStream(type, id, videoInfo, userParam, service, config.malClientId);
+    const stream = await addonInterface.getCombinedStream(type, id, videoInfo, svcConfig, config.malClientId);
     res.json(stream);
   } catch (error) {
     console.error('Combined stream error:', error.message);

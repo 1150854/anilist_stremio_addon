@@ -12,7 +12,8 @@ const anilistService = require('./services/anilist');
 const malService = require('./services/mal');
 const imdbService = require('./services/imdb');
 const letterboxdService = require('./services/letterboxd');
-const { ADDON_MANIFEST, MAL_MANIFEST, IMDB_MANIFEST, LETTERBOXD_MANIFEST, ANILIST_CATALOGS, MAL_CATALOGS, IMDB_CATALOGS, LETTERBOXD_CATALOGS } = require('./config/constants');
+const tokenManager = require('./config/tokens');
+const { ADDON_MANIFEST, MAL_MANIFEST, IMDB_MANIFEST, LETTERBOXD_MANIFEST, ANILIST_CATALOGS, MAL_CATALOGS, IMDB_CATALOGS, LETTERBOXD_CATALOGS, COMBINED_ANIME_CATALOGS, COMBINED_MOVIE_CATALOGS } = require('./config/constants');
 
 // Maps the genre filter label to each service's status value
 const ANILIST_STATUS_MAP = {
@@ -58,7 +59,8 @@ function getManifest(service) {
 }
 
 /**
- * Returns a combined Stremio manifest merging catalogs from multiple services.
+ * Returns a combined Stremio manifest merging catalogs from multiple services
+ * into ONE anime catalog entry and ONE movie catalog entry.
  *
  * @param {Object} serviceConfig - Map of service names to their tokens/usernames
  * @returns {Object} Combined Stremio manifest object
@@ -68,15 +70,31 @@ function getCombinedManifest(serviceConfig) {
   const catalogs = [];
   const types = new Set();
   const idPrefixes = new Set();
-  const resources = new Set();
+  const resources = new Set(['catalog']);
 
-  for (const svc of services) {
-    const m = getManifest(svc);
-    catalogs.push(...m.catalogs);
-    m.types.forEach(t => types.add(t));
-    if (m.idPrefixes) m.idPrefixes.forEach(p => idPrefixes.add(p));
-    if (m.resources) m.resources.forEach(r => resources.add(r));
+  const hasAnimeService = services.some(s => s === 'anilist' || s === 'mal');
+  const hasMovieService = services.some(s => s === 'letterboxd');
+  const hasImdb = services.includes('imdb');
+
+  if (hasAnimeService || hasImdb) {
+    types.add('anime');
+    types.add('series');
+    catalogs.push(...COMBINED_ANIME_CATALOGS);
+    if (hasAnimeService) {
+      resources.add('meta');
+      resources.add('stream');
+    }
   }
+
+  if (hasMovieService || hasImdb) {
+    types.add('movie');
+    catalogs.push(...COMBINED_MOVIE_CATALOGS);
+  }
+
+  if (services.includes('anilist')) { idPrefixes.add('anilist:'); idPrefixes.add('kitsu:'); }
+  if (services.includes('mal')) { idPrefixes.add('kitsu:'); idPrefixes.add('mal:'); }
+  if (hasImdb || hasMovieService) { idPrefixes.add('tt'); }
+  if (services.includes('letterboxd')) { idPrefixes.add('letterboxd:'); }
 
   return {
     id: 'community.combined-stremio',
@@ -375,6 +393,227 @@ async function getStream(type, id, videoInfo, username, service, malClientId) {
 }
 
 /**
+ * Handles catalog requests for the combined merged addon.
+ * Fetches from multiple services in parallel and deduplicates results.
+ * - combined.anime.list: AniList + MAL + IMDB (IMDB only under "Currently Watching")
+ * - combined.movie.list: Letterboxd + IMDB (IMDB only under "Watchlist")
+ */
+async function getCombinedCatalog(type, id, extra, serviceConfig, malClientId, letterboxdClientId, letterboxdClientSecret) {
+  // User navigated back to catalog — cancel any pending progress timers
+  cancelPendingTimers(_userKey(serviceConfig));
+
+  let genreFilter = 'Currently Watching';
+  if (extra) {
+    const match = extra.match(/genre=([^&]+)/);
+    if (match) genreFilter = decodeURIComponent(match[1]);
+  }
+  console.log(`Combined catalog request - ID: ${id}, Genre: ${genreFilter}`);
+
+  if (id === 'combined.anime.list') {
+    const promises = [];
+
+    if (serviceConfig.anilist) {
+      const anilistStatus = ANILIST_STATUS_MAP[genreFilter] || 'CURRENT';
+      promises.push(
+        anilistService.getAnimeList(serviceConfig.anilist, anilistStatus)
+          .catch(err => { console.error('AniList fetch error:', err.message); return []; })
+      );
+    }
+
+    if (serviceConfig.mal) {
+      const malStatus = MAL_STATUS_MAP[genreFilter] || 'watching';
+      // serviceConfig.mal may be an opaque hex token — resolve to real username
+      const malUsername = tokenManager.resolveOpaqueToken(serviceConfig.mal) || serviceConfig.mal;
+      promises.push(
+        malService.getAnimeList(malUsername, malClientId, malStatus)
+          .catch(err => { console.error('MAL fetch error:', err.message); return []; })
+      );
+    }
+
+    // IMDB has no status concept — only include under "Currently Watching"
+    if (serviceConfig.imdb && genreFilter === 'Currently Watching') {
+      promises.push(
+        imdbService.getWatchlist(serviceConfig.imdb)
+          .then(all => all.filter(m => m.type === 'anime'))
+          .catch(err => { console.error('IMDB fetch error:', err.message); return []; })
+      );
+    }
+
+    const results = await Promise.all(promises);
+    const seen = new Set();
+    const metas = results.flat().filter(m => {
+      if (seen.has(m.id)) return false;
+      seen.add(m.id);
+      return true;
+    });
+    console.log(`Combined anime catalog [${genreFilter}]: ${metas.length} items`);
+    return { metas };
+  }
+
+  if (id === 'combined.movie.list') {
+    const promises = [];
+
+    if (serviceConfig.letterboxd) {
+      const letterboxdStatus = LETTERBOXD_STATUS_MAP[genreFilter] || 'Watchlist';
+      promises.push(
+        letterboxdService.getCatalog(serviceConfig.letterboxd, letterboxdStatus, letterboxdClientId, letterboxdClientSecret)
+          .catch(err => { console.error('Letterboxd fetch error:', err.message); return []; })
+      );
+    }
+
+    // IMDB has no status concept — only include under "Watchlist"
+    if (serviceConfig.imdb && genreFilter === 'Watchlist') {
+      promises.push(
+        imdbService.getWatchlist(serviceConfig.imdb)
+          .then(all => all.filter(m => m.type === 'movie'))
+          .catch(err => { console.error('IMDB fetch error:', err.message); return []; })
+      );
+    }
+
+    const results = await Promise.all(promises);
+    const seen = new Set();
+    const metas = results.flat().filter(m => {
+      if (seen.has(m.id)) return false;
+      seen.add(m.id);
+      return true;
+    });
+    console.log(`Combined movie catalog [${genreFilter}]: ${metas.length} items`);
+    return { metas };
+  }
+
+  return { metas: [] };
+}
+
+// Pending deferred progress-update timers, keyed by user identifier.
+// When the user navigates away (new stream request), all pending timers for
+// that user are cancelled so we don't update the episode they left.
+const pendingTimers = new Map();
+
+function _userKey(svcConfig) {
+  const tag = svcConfig.anilist || svcConfig.mal || svcConfig.imdb || 'unknown';
+  return String(tag).slice(0, 32);
+}
+
+function cancelPendingTimers(userKey) {
+  const timers = pendingTimers.get(userKey);
+  if (timers && timers.size > 0) {
+    for (const t of timers) clearTimeout(t);
+    console.log(`⏹ Cancelled ${timers.size} pending progress update(s) for user ${userKey.slice(0, 8)}...`);
+    pendingTimers.set(userKey, new Set());
+  }
+}
+
+/**
+ * Handles stream requests for the combined addon.
+ * Updates progress on ALL configured anime services (AniList + MAL) in parallel.
+ */
+async function getCombinedStream(type, id, videoInfo, svcConfig, malClientId) {
+  try {
+    console.log(`Combined stream request - Type: ${type}, ID: ${id}, Video: ${JSON.stringify(videoInfo)}`);
+
+    if (type !== 'anime' && type !== 'series' && type !== 'movie') {
+      return { streams: [] };
+    }
+
+    if (!videoInfo || !videoInfo.episode) {
+      return { streams: [] };
+    }
+
+    const episode = videoInfo.episode;
+    const userKey = _userKey(svcConfig);
+
+    // Cancel any pending deferred updates — the user navigated to a new title
+    cancelPendingTimers(userKey);
+    if (!pendingTimers.has(userKey)) pendingTimers.set(userKey, new Set());
+
+    // Resolve the content ID to per-service IDs in parallel
+    let anilistId = null;
+    let malId = null;
+
+    if (id.startsWith('anilist:')) {
+      anilistId = id.split(':')[1];
+      if (svcConfig.mal) {
+        malId = await anilistService.mapAniListToMal(anilistId).catch(() => null);
+        if (malId) console.log(`Mapped AniList ID ${anilistId} to MAL ID ${malId}`);
+      }
+    } else if (id.startsWith('kitsu:')) {
+      const kitsuId = id.split(':')[1];
+      const [aId, mId] = await Promise.all([
+        svcConfig.anilist ? anilistService.mapKitsuToAniList(kitsuId).catch(() => null) : Promise.resolve(null),
+        svcConfig.mal    ? malService.mapKitsuToMal(kitsuId).catch(() => null)          : Promise.resolve(null)
+      ]);
+      anilistId = aId;
+      malId = mId;
+      if (anilistId) console.log(`Mapped Kitsu ID ${kitsuId} to AniList ID ${anilistId}`);
+      if (malId)     console.log(`Mapped Kitsu ID ${kitsuId} to MAL ID ${malId}`);
+    } else if (id.startsWith('mal:')) {
+      malId = id.split(':')[1];
+    } else if (/^tt\d+/.test(id)) {
+      const imdbId = id.split(':')[0];
+      if (svcConfig.anilist) {
+        anilistId = await anilistService.mapImdbToAniList(imdbId).catch(() => null);
+        if (anilistId) console.log(`Mapped IMDB ID ${imdbId} to AniList ID ${anilistId}`);
+      }
+    } else {
+      return { streams: [] };
+    }
+
+    const updateNow = [];
+
+    // Helper: schedule immediate + deferred update for a service
+    function scheduleUpdate(svc, animeIdForSvc, token) {
+      tokenManager.cleanupOldSessions(svc, token);
+      const isNew = tokenManager.storeWatchSession(svc, token, animeIdForSvc, episode);
+      if (tokenManager.shouldUpdateProgress(svc, token, animeIdForSvc, episode)) {
+        tokenManager.markProgressUpdated(svc, token, animeIdForSvc, episode);
+        const p = svc === 'mal'
+          ? malService.updateProgress(animeIdForSvc, episode, token, malClientId)
+          : anilistService.updateProgress(animeIdForSvc, episode, token);
+        updateNow.push(
+          p.then(() => console.log(`✅ Updated ${svc} anime ${animeIdForSvc}: episode ${episode}`))
+           .catch(e => console.error(`${svc} progress update failed:`, e.message))
+        );
+      } else {
+        const _svc = svc, _id = animeIdForSvc, _token = token;
+        const timerId = setTimeout(async () => {
+          pendingTimers.get(userKey)?.delete(timerId);
+          if (tokenManager.shouldUpdateProgress(_svc, _token, _id, episode)) {
+            tokenManager.markProgressUpdated(_svc, _token, _id, episode);
+            try {
+              if (_svc === 'mal') {
+                await malService.updateProgress(_id, episode, _token, malClientId);
+              } else {
+                await anilistService.updateProgress(_id, episode, _token);
+              }
+              console.log(`✅ Updated ${_svc} anime ${_id}: episode ${episode} (deferred 5min)`);
+            } catch (e) {
+              console.error(`Deferred ${_svc} progress update failed:`, e.message);
+            }
+          }
+        }, 5 * 60 * 1000 + 2000);
+        pendingTimers.get(userKey).add(timerId);
+      }
+    }
+
+    if (anilistId && svcConfig.anilist) {
+      scheduleUpdate('anilist', anilistId, svcConfig.anilist);
+    }
+
+    if (malId && svcConfig.mal) {
+      const malUsername = tokenManager.resolveOpaqueToken(svcConfig.mal) || svcConfig.mal;
+      scheduleUpdate('mal', malId, malUsername);
+    }
+
+    await Promise.all(updateNow);
+    return { streams: [] };
+
+  } catch (error) {
+    console.error(`Error in getCombinedStream (${type}/${id}):`, error.message);
+    return { streams: [] };
+  }
+}
+
+/**
  * Exported addon interface
  * 
  * This object provides the public API for the Stremio addon,
@@ -384,6 +623,8 @@ module.exports = {
   manifest,
   getManifest,
   getCombinedManifest,
+  getCombinedCatalog,
+  getCombinedStream,
   getCatalog,
   getMeta,
   getStream

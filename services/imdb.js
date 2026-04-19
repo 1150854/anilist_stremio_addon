@@ -30,6 +30,7 @@ const WATCHLIST_QUERY = `
             releaseYear { year }
             ratingsSummary { aggregateRating }
             titleGenres { genres { genre { text } } }
+            countriesOfOrigin { countries { text } }
             plot { plotText { plainText } }
             primaryImage { url }
             runtime { seconds }
@@ -56,6 +57,7 @@ const LIST_QUERY = `
             releaseYear { year }
             ratingsSummary { aggregateRating }
             titleGenres { genres { genre { text } } }
+            countriesOfOrigin { countries { text } }
             plot { plotText { plainText } }
             primaryImage { url }
             runtime { seconds }
@@ -113,7 +115,8 @@ function transformEdgesToMetas(edges) {
     const typeName = item.titleType?.text || '';
     const isMovie = typeName === 'Movie';
     const isSeries = typeName === 'TV Series' || typeName === 'TV Mini Series';
-    if (!isMovie && !isSeries) continue;
+    const isAnimeType = typeName === 'Anime Series';
+    if (!isMovie && !isSeries && !isAnimeType) continue;
 
     const genres = [];
     if (item.titleGenres?.genres) {
@@ -122,12 +125,22 @@ function transformEdgesToMetas(edges) {
       }
     }
 
+    const countries = [];
+    if (item.countriesOfOrigin?.countries) {
+      for (const c of item.countriesOfOrigin.countries) {
+        if (c.text) countries.push(c.text);
+      }
+    }
+
+    const isFromJapan = countries.includes('Japan');
+    const isAnime = isAnimeType || (isSeries && genres.includes('Animation') && isFromJapan);
+
     const rating = item.ratingsSummary?.aggregateRating;
     const year = item.releaseYear?.year;
 
     metas.push({
       id: item.id,
-      type: isMovie ? 'movie' : 'series',
+      type: isMovie ? 'movie' : isAnime ? 'anime' : 'series',
       name: item.titleText?.text || '',
       poster: item.primaryImage?.url || null,
       posterShape: POSTER_SHAPES.PORTRAIT,

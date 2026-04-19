@@ -497,12 +497,39 @@ async function updateProgress(animeId, episode, token) {
   }
 }
 
+const ANILIST_TO_MAL_QUERY = `
+  query ($id: Int) {
+    Media(id: $id, type: ANIME) {
+      idMal
+    }
+  }
+`;
+
+async function mapAniListToMal(anilistId) {
+  try {
+    const response = await axios.post(
+      ANILIST_API_URL,
+      { query: ANILIST_TO_MAL_QUERY, variables: { id: parseInt(anilistId, 10) } },
+      {
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+        timeout: 10000
+      }
+    );
+    const idMal = response.data?.data?.Media?.idMal;
+    return idMal ? String(idMal) : null;
+  } catch (err) {
+    console.error(`mapAniListToMal(${anilistId}):`, err.message);
+    return null;
+  }
+}
+
 module.exports = {
   getViewerInfo,
   getAnimeList,
   getAnimeMeta,
   mapKitsuToAniList,
   mapImdbToAniList,
+  mapAniListToMal,
   updateProgress
 };
 
